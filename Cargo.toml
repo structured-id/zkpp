@@ -25,7 +25,7 @@ argon2 = { version = "0.5", features = ["std"] }
 # `danger` exposes `derive_key`, which the key-exchange group needs to derive
 # its key pair the way the built-in curves do.
 voprf = { version = "0.5", features = ["danger"] }
-digest = "0.10"
+digest = "0.11"
 sha2 = "0.10"
 zeroize = "1"
 generic-array = "0.14"
