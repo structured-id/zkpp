@@ -48,7 +48,7 @@ fn test_circuit_stats() {
     let params = generate_params(ZKPP_K);
     let pk = generate_pk(&params, shape).unwrap();
     let prover = ZkppProver::new(params, pk, shape);
-    let keys = [<pallas::Scalar as ff::Field>::random(rand::rngs::OsRng)];
+    let keys = [<pallas::Scalar as ff::Field>::random(&mut rand::rng())];
     let bound = prover
         .prove(
             b"Str0ngP@ssword!",
@@ -186,9 +186,9 @@ fn test_combined_breach_nonmember_accepted() {
 /// Run with: cargo test -p sid-pake-core -- --nocapture test_stress_1000
 #[test]
 fn test_stress_1000() {
-    use rand::Rng;
+    use rand::RngExt;
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut pass_count = 0u32;
     let mut fail_count = 0u32;
     let total = 1000;
@@ -207,11 +207,11 @@ fn test_stress_1000() {
             (weak.to_string(), false)
         } else {
             let mut pw = String::new();
-            pw.push((b'A' + (rng.r#gen::<u8>() % 26)) as char);
-            pw.push((b'a' + (rng.r#gen::<u8>() % 26)) as char);
-            pw.push((b'0' + (rng.r#gen::<u8>() % 10)) as char);
-            for _ in 0..5 + (rng.r#gen::<usize>() % 8) {
-                pw.push((b'a' + (rng.r#gen::<u8>() % 26)) as char);
+            pw.push((b'A' + rng.random_range(0..26u8)) as char);
+            pw.push((b'a' + rng.random_range(0..26u8)) as char);
+            pw.push((b'0' + rng.random_range(0..10u8)) as char);
+            for _ in 0..rng.random_range(5..13) {
+                pw.push((b'a' + rng.random_range(0..26u8)) as char);
             }
             (pw, true)
         };
@@ -273,7 +273,7 @@ fn test_perf_binding() {
         let prover = ZkppProver::new(params.clone(), pk, shape);
         let verifier = ZkppVerifier::new(params.clone(), vk, shape);
         let keys: Vec<_> = (0..domains)
-            .map(|_| <pallas::Scalar as ff::Field>::random(rand::rngs::OsRng))
+            .map(|_| <pallas::Scalar as ff::Field>::random(&mut rand::rng()))
             .collect();
 
         // Warm up.

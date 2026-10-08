@@ -15,7 +15,9 @@ use halo2_proofs::{
     transcript::{Blake2bRead, Blake2bWrite, Challenge255, Transcript},
 };
 use pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
-use rand::{RngCore, SeedableRng, rngs::StdRng};
+use rand::{SeedableRng, rngs::StdRng};
+use rand_core::{Rng, TryRng};
+use std::convert::Infallible;
 use sid_pake_core::binding::{operation_context, transcript_context};
 use sid_pake_core::circuit::{
     BREACH_PARAMS, CircuitShape, HistoryInputs, ZKPP_K, ZkppCircuit, gadget_d::BloomFilter,
@@ -30,23 +32,22 @@ struct Recording {
     drawn: Vec<u8>,
 }
 
-impl RngCore for Recording {
-    fn next_u32(&mut self) -> u32 {
+impl TryRng for Recording {
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Infallible> {
         let mut b = [0u8; 4];
-        self.fill_bytes(&mut b);
-        u32::from_le_bytes(b)
+        self.try_fill_bytes(&mut b)?;
+        Ok(u32::from_le_bytes(b))
     }
-    fn next_u64(&mut self) -> u64 {
+    fn try_next_u64(&mut self) -> Result<u64, Infallible> {
         let mut b = [0u8; 8];
-        self.fill_bytes(&mut b);
-        u64::from_le_bytes(b)
+        self.try_fill_bytes(&mut b)?;
+        Ok(u64::from_le_bytes(b))
     }
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Infallible> {
         self.inner.fill_bytes(dest);
         self.drawn.extend_from_slice(dest);
-    }
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
-        self.fill_bytes(dest);
         Ok(())
     }
 }

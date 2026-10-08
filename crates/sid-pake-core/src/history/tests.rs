@@ -1,5 +1,4 @@
 use super::*;
-use rand::rngs::OsRng;
 
 /// Small Argon2id cost for tests; production parameters live in the manifest.
 const TEST_KSF: KsfParams = KsfParams {
@@ -23,7 +22,7 @@ fn comparison_domain() -> pallas::Base {
 /// The whole client/evaluator exchange for one password, with a fresh blind.
 fn tag(k: pallas::Scalar, owner: &str, password: &[u8]) -> pallas::Base {
     let u = history_input(owner_domain(owner), password);
-    let r = random_blind(OsRng);
+    let r = random_blind(rand::rng());
     let z = evaluate(k, blind_request(u, r)).expect("nonidentity");
     finalize_tag(comparison_domain(), u, r, z)
 }
@@ -37,7 +36,7 @@ fn synthetic_history(owner: &str, depth: usize) -> Vec<String> {
 }
 
 fn key() -> pallas::Scalar {
-    pallas::Scalar::random(OsRng)
+    pallas::Scalar::random(&mut rand::rng())
 }
 
 /// The tag depends on the password, not on the blind: two operations with
@@ -59,7 +58,7 @@ fn the_tag_separates_passwords_owners_and_domains() {
     assert_ne!(base, tag(k, "bob", b"Str0ngP@ss"));
 
     let u = history_input(owner_domain("alice"), b"Str0ngP@ss");
-    let r = random_blind(OsRng);
+    let r = random_blind(rand::rng());
     let z = evaluate(k, blind_request(u, r)).unwrap();
     let other_domain = domain_element(b"SID-HISTORY-TAG-v1", &[b"epoch-2", b"format-1"]);
     assert_ne!(base, finalize_tag(other_domain, u, r, z));
@@ -82,7 +81,7 @@ fn the_other_sign_of_the_point_gives_the_same_tag() {
     let k = key();
     let u = history_input(owner_domain("alice"), b"Str0ngP@ss");
     let (h, _) = canonical_point(u);
-    let r = random_blind(OsRng);
+    let r = random_blind(rand::rng());
     let b_neg = (-pallas::Point::from(h) * blind_scalar(r)).to_affine();
     let z_neg = evaluate(k, b_neg).unwrap();
     assert_eq!(
@@ -134,9 +133,9 @@ fn an_honest_evaluation_verifies() {
     let pk = (pallas::Point::generator() * k).to_affine();
     let b = blind_request(
         history_input(owner_domain("alice"), b"Str0ngP@ss"),
-        random_blind(OsRng),
+        random_blind(rand::rng()),
     );
-    let (z, proof) = evaluate_with_proof(k, b, b"op-1", OsRng).unwrap();
+    let (z, proof) = evaluate_with_proof(k, b, b"op-1", rand::rng()).unwrap();
     assert!(verify_evaluation(pk, b, z, b"op-1", &proof));
 }
 
@@ -148,9 +147,9 @@ fn a_substituted_evaluation_is_refused() {
     let pk = (pallas::Point::generator() * k).to_affine();
     let b = blind_request(
         history_input(owner_domain("alice"), b"Str0ngP@ss"),
-        random_blind(OsRng),
+        random_blind(rand::rng()),
     );
-    let (z, proof) = evaluate_with_proof(k, b, b"op-1", OsRng).unwrap();
+    let (z, proof) = evaluate_with_proof(k, b, b"op-1", rand::rng()).unwrap();
 
     let other_pk = (pallas::Point::generator() * key()).to_affine();
     assert!(
@@ -168,7 +167,7 @@ fn a_substituted_evaluation_is_refused() {
     );
     let other_b = blind_request(
         history_input(owner_domain("alice"), b"0therP@ss1"),
-        random_blind(OsRng),
+        random_blind(rand::rng()),
     );
     assert!(
         !verify_evaluation(pk, other_b, z, b"op-1", &proof),

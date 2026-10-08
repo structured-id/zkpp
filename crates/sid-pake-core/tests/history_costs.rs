@@ -9,7 +9,6 @@ use std::time::{Duration, Instant};
 use ff::Field;
 use group::Group;
 use pasta_curves::pallas;
-use rand::rngs::OsRng;
 use sid_pake_core::history::{
     HistoryEntry, KsfParams, blind_request, check_candidate, domain_element, evaluate_with_proof,
     finalize_tag, history_input, ksf, random_blind, verify_evaluation,
@@ -65,28 +64,28 @@ fn tag(k: pallas::Scalar, password: &[u8]) -> pallas::Base {
     let d = domain_element(b"SID-HISTORY-INPUT-v1", &[b"bench", b"alice"]);
     let c = domain_element(b"SID-HISTORY-TAG-v1", &[b"epoch-0"]);
     let u = history_input(d, password);
-    let r = random_blind(OsRng);
+    let r = random_blind(rand::rng());
     let b = blind_request(u, r);
-    let (z, _) = evaluate_with_proof(k, b, b"op", OsRng).unwrap();
+    let (z, _) = evaluate_with_proof(k, b, b"op", rand::rng()).unwrap();
     finalize_tag(c, u, r, z)
 }
 
 #[test]
 #[ignore]
 fn measure_history_costs() {
-    let k = pallas::Scalar::random(OsRng);
+    let k = pallas::Scalar::random(&mut rand::rng());
     let pk = group::Curve::to_affine(&(pallas::Point::generator() * k));
     let d = domain_element(b"SID-HISTORY-INPUT-v1", &[b"bench", b"alice"]);
-    let b = blind_request(history_input(d, b"Str0ngP@ssword!"), random_blind(OsRng));
+    let b = blind_request(history_input(d, b"Str0ngP@ssword!"), random_blind(rand::rng()));
 
     let eval: Vec<_> = (0..200)
         .map(|_| {
             let t = Instant::now();
-            std::hint::black_box(evaluate_with_proof(k, b, b"op", OsRng));
+            std::hint::black_box(evaluate_with_proof(k, b, b"op", rand::rng()));
             t.elapsed()
         })
         .collect();
-    let (z, proof) = evaluate_with_proof(k, b, b"op", OsRng).unwrap();
+    let (z, proof) = evaluate_with_proof(k, b, b"op", rand::rng()).unwrap();
     let verify: Vec<_> = (0..200)
         .map(|_| {
             let t = Instant::now();

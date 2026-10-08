@@ -11,7 +11,8 @@ use halo2_proofs::{
     transcript::{Blake2bWrite, Challenge255, Transcript},
 };
 use pasta_curves::{pallas, vesta};
-use rand::rngs::OsRng;
+use rand::rngs::SysRng;
+use rand_core::UnwrapErr;
 
 use crate::circuit::{
     BREACH_PARAMS, CircuitShape, HistoryInputs, ZkppCircuit, gadget_d::BloomFilter,
@@ -153,7 +154,7 @@ impl ZkppProver {
             &self.pk,
             &[circuit],
             &[&[&instances]],
-            OsRng,
+            UnwrapErr(SysRng),
             &mut transcript,
         )
         .map_err(|e| ZkppProveError::ProofFailed(format!("{e:?}")))?;

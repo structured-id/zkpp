@@ -92,7 +92,7 @@ pub fn blind_scalar(r: pallas::Base) -> pallas::Scalar {
 }
 
 /// A fresh nonzero blind drawn from the base field.
-pub fn random_blind(mut rng: impl rand::RngCore) -> pallas::Base {
+pub fn random_blind(mut rng: impl rand_core::CryptoRng) -> pallas::Base {
     loop {
         let r = pallas::Base::random(&mut rng);
         if !bool::from(r.is_zero()) {
@@ -148,7 +148,7 @@ fn challenge(
     t3: pallas::Affine,
 ) -> pallas::Scalar {
     use group::GroupEncoding;
-    use voprf::Group as _;
+    use sid_voprf::Group as _;
     let points = [pk, b, z, t2, t3].map(|p| p.to_bytes());
     let context_len = u32::try_from(context.len())
         .expect("context fits u32")
@@ -172,7 +172,7 @@ pub fn evaluate_with_proof(
     k: pallas::Scalar,
     b: pallas::Affine,
     context: &[u8],
-    mut rng: impl rand::RngCore,
+    mut rng: impl rand_core::CryptoRng,
 ) -> Option<(pallas::Affine, EvaluationProof)> {
     let z = evaluate(k, b)?;
     let pk = (pallas::Point::generator() * k).to_affine();

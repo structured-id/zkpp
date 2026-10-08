@@ -22,7 +22,7 @@
 //! the key's structure alone, never by its values.
 
 use ff::{Field, PrimeField};
-use group::{GroupEncoding, prime::PrimeCurveAffine};
+use group::{CurveAffine as _, GroupEncoding};
 use halo2_proofs::{
     plonk::{SingleVerifier, VerifyingKey, verify_proof},
     poly::commitment::Params,
@@ -261,6 +261,6 @@ mod tests;
 /// `(0, 0)`) and off-curve pairs are refused.
 fn point(x: pallas::Base, y: pallas::Base) -> Result<pallas::Affine, ZkppVerifyError> {
     Option::<pallas::Affine>::from(pallas::Affine::from_xy(x, y))
-        .filter(|p| !bool::from(group::prime::PrimeCurveAffine::is_identity(p)))
+        .filter(|p| !bool::from(group::CurveAffine::is_identity(p)))
         .ok_or(ZkppVerifyError::ProofInvalid)
 }

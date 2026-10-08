@@ -11,10 +11,9 @@ mod common;
 use common::history_evaluation;
 use ff::PrimeField;
 use group::{Curve, Group};
-use opaque_ke::ClientRegistration;
-use opaque_ke::rand::rngs::OsRng;
 use pasta_curves::arithmetic::{CurveAffine, CurveExt};
 use pasta_curves::pallas;
+use sid_opaque_ke::ClientRegistration;
 use sid_pake_core::binding::operation_context;
 use sid_pake_core::circuit::CircuitShape;
 use sid_pake_core::circuit::gadget_c::hash_to_curve_outside;
@@ -46,7 +45,7 @@ struct Honest {
 
 fn honest(prover: &ZkppProver) -> Honest {
     loop {
-        let start = ClientRegistration::<PallasCipherSuite>::start(&mut OsRng, PASSWORD).unwrap();
+        let start = ClientRegistration::<PallasCipherSuite>::start(&mut rand::rng(), PASSWORD).unwrap();
         let mut repr = <pallas::Scalar as PrimeField>::Repr::default();
         repr.copy_from_slice(&start.state.serialize()[..32]);
         let blind = pallas::Scalar::from_repr(repr).unwrap();

@@ -8,7 +8,6 @@ use halo2_proofs::{
     dev::MockProver,
     plonk::{Circuit, Instance},
 };
-use rand::rngs::OsRng;
 
 /// The binder (for the password hash `u_C` it binds) and Gadget H over it,
 /// with instance `[d, c_0.., B.x, B.y, (Z_j.x, Z_j.y, t_j)..]`.
@@ -145,12 +144,12 @@ fn verify(password: &[u8], w: HistoryTagWitness, inst: Vec<pallas::Base>) -> Str
 }
 
 fn keys(n: usize) -> Vec<pallas::Scalar> {
-    (0..n).map(|_| pallas::Scalar::random(OsRng)).collect()
+    (0..n).map(|_| pallas::Scalar::random(&mut rand::rng())).collect()
 }
 
 fn honest_with(password: &[u8], domains: usize) -> (pallas::Base, HistoryTagWitness) {
     let u = history_input(owner(), password);
-    let w = HistoryTagWitness::honest(u, random_blind(OsRng), &keys(domains));
+    let w = HistoryTagWitness::honest(u, random_blind(rand::rng()), &keys(domains));
     (u, w)
 }
 
@@ -214,7 +213,7 @@ fn two_domains_satisfy_the_gadget() {
 #[test]
 fn the_witness_from_evaluations_is_the_honest_witness() {
     let ks = keys(2);
-    let r = random_blind(OsRng);
+    let r = random_blind(rand::rng());
     let u = history_input(owner(), PASSWORD);
     let b = crate::history::blind_request(u, r);
     let z: Vec<_> = ks
@@ -234,7 +233,7 @@ fn the_witness_from_evaluations_is_the_honest_witness() {
 #[test]
 fn the_gadget_tags_match_the_native_tags() {
     let ks = keys(2);
-    let r = random_blind(OsRng);
+    let r = random_blind(rand::rng());
     let u = history_input(owner(), PASSWORD);
     let cs = comparison_domains(2);
     let w = HistoryTagWitness::honest(u, r, &ks);
@@ -271,7 +270,7 @@ fn a_later_offset_than_the_first_is_refused() {
                 .unwrap_or(pallas::Base::ONE)
         })
         .collect();
-    let k = pallas::Scalar::random(OsRng);
+    let k = pallas::Scalar::random(&mut rand::rng());
     let w = HistoryTagWitness {
         h,
         offset: later,
@@ -340,7 +339,7 @@ fn another_passwords_tag_is_refused() {
 fn another_owners_tag_is_refused() {
     let other = domain_element(b"SID-HISTORY-INPUT-v1", &[b"test-installation", b"bob"]);
     let u = history_input(other, PASSWORD);
-    let w = HistoryTagWitness::honest(u, random_blind(OsRng), &keys(1));
+    let w = HistoryTagWitness::honest(u, random_blind(rand::rng()), &keys(1));
     let inst = instances(u, &w);
     assert_ne!(verify(PASSWORD, w, inst), "Ok(())");
 }

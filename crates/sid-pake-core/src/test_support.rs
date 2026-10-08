@@ -3,7 +3,6 @@
 
 use group::Curve;
 use pasta_curves::pallas;
-use rand::rngs::OsRng;
 
 use crate::circuit::HistoryInputs;
 use crate::circuit::gadget_c::hash_to_curve_outside;
@@ -37,7 +36,7 @@ pub(crate) fn test_domains(n: usize) -> Vec<pallas::Base> {
 /// as the prover receives them.
 pub(crate) fn history_evaluation(password: &[u8], keys: &[pallas::Scalar]) -> HistoryEvaluation {
     let d = test_owner();
-    let r = random_blind(OsRng);
+    let r = random_blind(rand::rng());
     let b = blind_request(history_input(d, password), r);
     HistoryEvaluation {
         d,
@@ -53,7 +52,7 @@ pub(crate) fn history_evaluation(password: &[u8], keys: &[pallas::Scalar]) -> Hi
 /// Circuit history inputs for `password` over `domains` fresh keys.
 pub(crate) fn history_inputs(password: &[u8], domains: usize) -> HistoryInputs {
     let keys: Vec<_> = (0..domains)
-        .map(|_| <pallas::Scalar as ff::Field>::random(OsRng))
+        .map(|_| <pallas::Scalar as ff::Field>::random(&mut rand::rng()))
         .collect();
     let eval = history_evaluation(password, &keys);
     let u = history_input(eval.d, password);

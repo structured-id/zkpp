@@ -8,9 +8,8 @@ mod common;
 use common::history_evaluation;
 use ff::PrimeField;
 use group::GroupEncoding;
-use opaque_ke::rand::rngs::OsRng;
-use opaque_ke::{ClientRegistration, ClientRegistrationStartResult};
 use pasta_curves::pallas;
+use sid_opaque_ke::{ClientRegistration, ClientRegistrationStartResult};
 use sid_pake_core::circuit::CircuitShape;
 use sid_pake_core::keygen::{generate_params, generate_pk};
 use sid_pake_core::pallas_opaque::PallasCipherSuite;
@@ -29,7 +28,7 @@ const CE: CircuitShape = CircuitShape::single_domain(CE_DEFAULT_POLICY);
 const LAX_SHAPE: CircuitShape = CircuitShape::single_domain(LAX);
 
 fn start(password: &[u8]) -> ClientRegistrationStartResult<PallasCipherSuite> {
-    ClientRegistration::<PallasCipherSuite>::start(&mut OsRng, password)
+    ClientRegistration::<PallasCipherSuite>::start(&mut rand::rng(), password)
         .expect("registration start")
 }
 

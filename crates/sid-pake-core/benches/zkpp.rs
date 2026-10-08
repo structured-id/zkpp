@@ -6,9 +6,8 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use ff::{Field, PrimeField};
 use group::GroupEncoding;
-use opaque_ke::ClientRegistration;
-use opaque_ke::rand::rngs::OsRng;
 use pasta_curves::pallas;
+use sid_opaque_ke::ClientRegistration;
 use sid_pake_core::circuit::{CircuitShape, ZKPP_K};
 use sid_pake_core::history::{
     blind_request, domain_element, evaluate, history_input, random_blind,
@@ -24,7 +23,7 @@ const PASSWORD: &[u8] = b"Str0ngP@ssword!";
 /// A client's OPAQUE registration request for `password`: its bytes, its OPRF
 /// element `M` and the blind behind it (the state starts with the blind).
 fn registration_request(password: &[u8]) -> (Vec<u8>, pallas::Affine, pallas::Scalar) {
-    let start = ClientRegistration::<PallasCipherSuite>::start(&mut OsRng, password).unwrap();
+    let start = ClientRegistration::<PallasCipherSuite>::start(&mut rand::rng(), password).unwrap();
     let bytes = start.message.serialize().to_vec();
     let m = pallas::Affine::from_bytes(bytes.as_slice().try_into().unwrap()).unwrap();
     let mut repr = <pallas::Scalar as PrimeField>::Repr::default();
@@ -36,7 +35,7 @@ fn registration_request(password: &[u8]) -> (Vec<u8>, pallas::Affine, pallas::Sc
 /// The evaluator's answers for `password` over `domains` keys.
 fn history(password: &[u8], domains: usize) -> HistoryEvaluation {
     let d = domain_element(b"SID-HISTORY-INPUT-v1", &[b"bench", b"alice"]);
-    let r = random_blind(OsRng);
+    let r = random_blind(rand::rng());
     let b = blind_request(history_input(d, password), r);
     HistoryEvaluation {
         d,
@@ -45,7 +44,7 @@ fn history(password: &[u8], domains: usize) -> HistoryEvaluation {
             .collect(),
         r,
         evaluations: (0..domains)
-            .map(|_| evaluate(pallas::Scalar::random(OsRng), b).unwrap())
+            .map(|_| evaluate(pallas::Scalar::random(&mut rand::rng()), b).unwrap())
             .collect(),
     }
 }

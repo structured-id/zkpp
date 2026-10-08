@@ -12,25 +12,28 @@ authors = ["StructuredID Contributors"]
 [workspace.dependencies]
 # The proof system as published on crates.io: this workspace builds and
 # verifies on it with no fork or patch.
-halo2_proofs = { version = "=0.3.2", features = ["batch"] }
-halo2_gadgets = "0.5"
-pasta_curves = "0.5.1"
-ff = "0.13"
-group = "0.13"
+halo2_proofs = { version = "=0.4.0", features = ["batch"] }
+halo2_gadgets = "0.6"
+pasta_curves = "0.6"
+ff = "0.14"
+group = "0.14"
 subtle = "2"
 
-# OPAQUE on Pallas and the history VOPRF
-opaque-ke = { version = "4", features = ["argon2"] }
-argon2 = { version = "0.5", features = ["std"] }
+# OPAQUE on Pallas and the history VOPRF, on the current RustCrypto releases.
+sid-opaque-ke = { version = "4.1", features = ["argon2"] }
+argon2 = "0.6"
 # `danger` exposes `derive_key`, which the key-exchange group needs to derive
 # its key pair the way the built-in curves do.
-voprf = { version = "0.5", features = ["danger"] }
-digest = "0.10"
-sha2 = "0.10"
+sid-voprf = { version = "0.6", features = ["danger"] }
+digest = "0.11"
+# RFC 9380 expand_message_xmd for the OPRF hash-to-scalar.
+hash2curve = "0.14"
+hybrid-array = "0.4"
+sha2 = "0.11"
 zeroize = "1"
-generic-array = "0.14"
 
-rand = "0.8"
+rand = "0.10"
+rand_core = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
