@@ -1,0 +1,21 @@
+StructuredID ZKPP (sid-pake-core)
+Copyright (C) Dmitry Prudnikov
+
+This software implements the Zero-Knowledge Password Policy (ZKPP) method
+over OPAQUE (RFC 9807) on the Pallas curve: the circuit, the verifier, a
+reference prover, the private password-history relation and the key
+generation they share.
+
+LICENSE
+-------
+This software is distributed under the GNU Affero General Public License,
+version 3 only. See the LICENSE file.
+
+PATENT
+------
+The ZKPP method is covered by one or more patents. Section 11 of the GNU
+Affero General Public License, version 3, grants every recipient a patent
+license for this software as distributed and for works based on it under
+that license. Other uses need a commercial license.
+
+Contact: oss@structured.id

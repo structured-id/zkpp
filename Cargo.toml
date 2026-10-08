@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = ["crates/sid-pake-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+repository = "https://github.com/structured-id/zkpp"
+authors = ["StructuredID Contributors"]
+
+[workspace.dependencies]
+# The proof system as published on crates.io: this workspace builds and
+# verifies on it with no fork or patch.
+halo2_proofs = { version = "=0.3.2", features = ["batch"] }
+halo2_gadgets = "0.5"
+pasta_curves = "0.5.1"
+ff = "0.13"
+group = "0.13"
+subtle = "2"
+
+# OPAQUE on Pallas and the history VOPRF
+opaque-ke = { version = "4", features = ["argon2"] }
+argon2 = { version = "0.5", features = ["std"] }
+# `danger` exposes `derive_key`, which the key-exchange group needs to derive
+# its key pair the way the built-in curves do.
+voprf = { version = "0.5", features = ["danger"] }
+digest = "0.10"
+sha2 = "0.10"
+zeroize = "1"
+generic-array = "0.14"
+
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+# Halo2 ECC arithmetic is 10-20× slower unoptimized, which makes the proving
+# tests take minutes in debug builds.
+[profile.dev.package.halo2_proofs]
+opt-level = 3
+[profile.dev.package.halo2_gadgets]
+opt-level = 3
+[profile.dev.package.pasta_curves]
+opt-level = 3
+[profile.dev.package.ff]
+opt-level = 3
+[profile.dev.package.group]
+opt-level = 3
+[profile.dev.package.sid-pake-core]
+opt-level = 2
