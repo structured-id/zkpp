@@ -12,7 +12,7 @@ authors = ["StructuredID Contributors"]
 [workspace.dependencies]
 # The proof system as published on crates.io: this workspace builds and
 # verifies on it with no fork or patch.
-halo2_proofs = { version = "=0.3.2", features = ["batch"] }
+halo2_proofs = { version = "=0.4.0", features = ["batch"] }
 halo2_gadgets = "0.5"
 pasta_curves = "0.5.1"
 ff = "0.13"
