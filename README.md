@@ -34,3 +34,5 @@ examples.
 
 AGPL-3.0-only. The ZKPP method is patent-protected; see `NOTICE` for the
 patent license that comes with this software.
+
+Contributions are accepted under the [Structured World Contributor License Agreement](https://sw.foundation/cla); see [CONTRIBUTING.md](CONTRIBUTING.md).
