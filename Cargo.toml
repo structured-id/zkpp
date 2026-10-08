@@ -26,7 +26,7 @@ argon2 = { version = "0.5", features = ["std"] }
 # its key pair the way the built-in curves do.
 voprf = { version = "0.5", features = ["danger"] }
 digest = "0.10"
-sha2 = "0.10"
+sha2 = "0.11"
 zeroize = "1"
 generic-array = "0.14"
 
