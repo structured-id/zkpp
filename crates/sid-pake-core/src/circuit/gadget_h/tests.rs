@@ -144,7 +144,9 @@ fn verify(password: &[u8], w: HistoryTagWitness, inst: Vec<pallas::Base>) -> Str
 }
 
 fn keys(n: usize) -> Vec<pallas::Scalar> {
-    (0..n).map(|_| pallas::Scalar::random(&mut rand::rng())).collect()
+    (0..n)
+        .map(|_| pallas::Scalar::random(&mut rand::rng()))
+        .collect()
 }
 
 fn honest_with(password: &[u8], domains: usize) -> (pallas::Base, HistoryTagWitness) {

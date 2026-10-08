@@ -76,7 +76,10 @@ fn measure_history_costs() {
     let k = pallas::Scalar::random(&mut rand::rng());
     let pk = group::Curve::to_affine(&(pallas::Point::generator() * k));
     let d = domain_element(b"SID-HISTORY-INPUT-v1", &[b"bench", b"alice"]);
-    let b = blind_request(history_input(d, b"Str0ngP@ssword!"), random_blind(rand::rng()));
+    let b = blind_request(
+        history_input(d, b"Str0ngP@ssword!"),
+        random_blind(rand::rng()),
+    );
 
     let eval: Vec<_> = (0..200)
         .map(|_| {

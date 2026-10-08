@@ -45,7 +45,8 @@ struct Honest {
 
 fn honest(prover: &ZkppProver) -> Honest {
     loop {
-        let start = ClientRegistration::<PallasCipherSuite>::start(&mut rand::rng(), PASSWORD).unwrap();
+        let start =
+            ClientRegistration::<PallasCipherSuite>::start(&mut rand::rng(), PASSWORD).unwrap();
         let mut repr = <pallas::Scalar as PrimeField>::Repr::default();
         repr.copy_from_slice(&start.state.serialize()[..32]);
         let blind = pallas::Scalar::from_repr(repr).unwrap();

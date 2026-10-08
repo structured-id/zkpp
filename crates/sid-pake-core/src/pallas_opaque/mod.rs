@@ -21,7 +21,9 @@ use ff::{Field, FromUniformBytes, PrimeField};
 use group::{CurveAffine as _, Group as GroupTrait, GroupEncoding};
 use hash2curve::{ExpandMsg, ExpandMsgXmd, Expander};
 use hybrid_array::Array;
-use hybrid_array::typenum::{IsGreaterOrEqual, IsLess, IsLessOrEqual, Prod, True, U2, U16, U32, U256};
+use hybrid_array::typenum::{
+    IsGreaterOrEqual, IsLess, IsLessOrEqual, Prod, True, U2, U16, U32, U256,
+};
 use pasta_curves::pallas;
 use rand_core::{CryptoRng, TryCryptoRng, TryRng};
 use subtle::{Choice, ConstantTimeEq};
@@ -365,8 +367,7 @@ pub struct PallasCipherSuite;
 
 impl sid_opaque_ke::CipherSuite for PallasCipherSuite {
     type OprfCs = PallasVoprf;
-    type KeyExchange =
-        sid_opaque_ke::key_exchange::tripledh::TripleDh<PallasGroup, sha2::Sha256>;
+    type KeyExchange = sid_opaque_ke::key_exchange::tripledh::TripleDh<PallasGroup, sha2::Sha256>;
     type Ksf = argon2::Argon2<'static>;
 }
 

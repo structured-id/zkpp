@@ -17,11 +17,11 @@ The crate `sid-pake-core` contains:
 - a reference prover;
 - the private password-history relation (VOPRF with a DLEQ proof) and the
   history checker's tag finalization;
-- OPAQUE on Pallas (`PallasCipherSuite` for `opaque-ke`);
+- OPAQUE on Pallas (`PallasCipherSuite` for `sid-opaque-ke`);
 - key generation (parameters, verifying and proving keys) per policy and
   history-domain count.
 
-It builds on `halo2_proofs` 0.3.2 as published on crates.io, with no fork.
+It builds on `halo2_proofs` 0.4.0 as published on crates.io, with no fork.
 
 ## Clients
 

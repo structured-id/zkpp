@@ -17,7 +17,6 @@ use halo2_proofs::{
 use pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
 use rand::{SeedableRng, rngs::StdRng};
 use rand_core::{Rng, TryRng};
-use std::convert::Infallible;
 use sid_pake_core::binding::{operation_context, transcript_context};
 use sid_pake_core::circuit::{
     BREACH_PARAMS, CircuitShape, HistoryInputs, ZKPP_K, ZkppCircuit, gadget_d::BloomFilter,
@@ -26,6 +25,7 @@ use sid_pake_core::circuit::{
 use sid_pake_core::history::{blind_request, domain_element, evaluate, history_input};
 use sid_pake_core::keygen::{generate_params, generate_pk};
 use sid_pake_core::types::{CE_DEFAULT_POLICY, MAX_PASSWORD_LEN};
+use std::convert::Infallible;
 
 struct Recording {
     inner: StdRng,

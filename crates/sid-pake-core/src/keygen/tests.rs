@@ -19,7 +19,9 @@ const STRICT: PolicyParams = PolicyParams {
 const CE: CircuitShape = CircuitShape::single_domain(CE_DEFAULT_POLICY);
 
 fn keys(n: usize) -> Vec<pallas::Scalar> {
-    (0..n).map(|_| pallas::Scalar::random(&mut rand::rng())).collect()
+    (0..n)
+        .map(|_| pallas::Scalar::random(&mut rand::rng()))
+        .collect()
 }
 
 /// A witness-free copy of the circuit keeps its shape: keygen and reload lay
