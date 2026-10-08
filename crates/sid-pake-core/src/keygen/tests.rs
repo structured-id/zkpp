@@ -6,7 +6,6 @@ use crate::types::{CE_DEFAULT_POLICY, PolicyParams};
 use crate::verifier::ZkppVerifier;
 use ff::Field;
 use pasta_curves::pallas;
-use rand::rngs::OsRng;
 
 /// A stricter policy than CE's, for custom-policy key tests.
 const STRICT: PolicyParams = PolicyParams {
@@ -20,7 +19,9 @@ const STRICT: PolicyParams = PolicyParams {
 const CE: CircuitShape = CircuitShape::single_domain(CE_DEFAULT_POLICY);
 
 fn keys(n: usize) -> Vec<pallas::Scalar> {
-    (0..n).map(|_| pallas::Scalar::random(OsRng)).collect()
+    (0..n)
+        .map(|_| pallas::Scalar::random(&mut rand::rng()))
+        .collect()
 }
 
 /// A witness-free copy of the circuit keeps its shape: keygen and reload lay
@@ -52,7 +53,7 @@ fn custom_policy_keys_prove_only_their_policy() {
     let ks = keys(1);
 
     let password = b"AAbb12!xyzqw";
-    let blind = pallas::Scalar::random(OsRng);
+    let blind = pallas::Scalar::random(&mut rand::rng());
     let bound = prover
         .prove(password, blind, b"ctx", &history_evaluation(password, &ks))
         .unwrap();
@@ -94,7 +95,7 @@ fn a_proof_for_fewer_domains_is_refused() {
     let prover = ZkppProver::new(params.clone(), one_pk, CE);
 
     let password = b"Str0ngP@ssword!";
-    let blind = pallas::Scalar::random(OsRng);
+    let blind = pallas::Scalar::random(&mut rand::rng());
     let bound = prover
         .prove(
             password,
@@ -207,7 +208,7 @@ fn test_bound_registration_roundtrip() {
     let verifier = ZkppVerifier::new(params, vk, CE);
 
     let password = b"Str0ngP@ssword!";
-    let blind = pallas::Scalar::random(OsRng);
+    let blind = pallas::Scalar::random(&mut rand::rng());
     let ctx = b"sid-reg-nonce-1";
     let bound = prover
         .prove(
@@ -223,7 +224,7 @@ fn test_bound_registration_roundtrip() {
         .verify(&bound, ctx, m)
         .expect("bound proof must verify");
 
-    let other_m = pallas::Point::random(OsRng).to_affine();
+    let other_m = pallas::Point::random(&mut rand::rng()).to_affine();
     assert!(verifier.verify(&bound, ctx, other_m).is_err());
 
     assert!(verifier.verify(&bound, b"other-nonce", m).is_err());

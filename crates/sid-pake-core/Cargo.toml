@@ -21,16 +21,18 @@ group = { workspace = true }
 subtle = { workspace = true }
 
 # OPAQUE + VOPRF CipherSuite
-opaque-ke = { workspace = true }
+sid-opaque-ke = { workspace = true }
 argon2 = { workspace = true }
-voprf = { workspace = true }
+sid-voprf = { workspace = true }
 digest = { workspace = true }
+hash2curve = { workspace = true }
+hybrid-array = { workspace = true }
 sha2 = { workspace = true }
 zeroize = { workspace = true }
-generic-array = { workspace = true }
 
 # General
 rand = { workspace = true }
+rand_core = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 

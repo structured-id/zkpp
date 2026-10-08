@@ -7,12 +7,15 @@
 //!
 //! `cargo run -p sid-pake-core --example opaque_vectors -- opaque-vectors.json`
 
-use opaque_ke::{
+use std::convert::Infallible;
+
+use rand::{SeedableRng, rngs::StdRng};
+use rand_core::{Rng, TryCryptoRng, TryRng};
+use sid_opaque_ke::{
     ClientLogin, ClientLoginFinishParameters, ClientRegistration,
     ClientRegistrationFinishParameters, ServerLogin, ServerLoginParameters, ServerRegistration,
     ServerSetup,
 };
-use rand::{CryptoRng, RngCore, SeedableRng, rngs::StdRng};
 use sid_pake_core::pallas_opaque::PallasCipherSuite;
 
 /// An RNG that records every byte it hands out, in order.
@@ -21,28 +24,27 @@ struct Recording {
     drawn: Vec<u8>,
 }
 
-impl RngCore for Recording {
-    fn next_u32(&mut self) -> u32 {
+impl TryRng for Recording {
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Infallible> {
         let mut b = [0u8; 4];
-        self.fill_bytes(&mut b);
-        u32::from_le_bytes(b)
+        self.try_fill_bytes(&mut b)?;
+        Ok(u32::from_le_bytes(b))
     }
-    fn next_u64(&mut self) -> u64 {
+    fn try_next_u64(&mut self) -> Result<u64, Infallible> {
         let mut b = [0u8; 8];
-        self.fill_bytes(&mut b);
-        u64::from_le_bytes(b)
+        self.try_fill_bytes(&mut b)?;
+        Ok(u64::from_le_bytes(b))
     }
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Infallible> {
         self.inner.fill_bytes(dest);
         self.drawn.extend_from_slice(dest);
-    }
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
-        self.fill_bytes(dest);
         Ok(())
     }
 }
 
-impl CryptoRng for Recording {}
+impl TryCryptoRng for Recording {}
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()

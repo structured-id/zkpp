@@ -11,7 +11,6 @@ use crate::test_support::{history_evaluation, oprf_element};
 use crate::types::{CE_DEFAULT_POLICY, ZkppProof};
 use ff::Field;
 use group::{Curve, Group};
-use rand::rngs::OsRng;
 
 const PASSWORD: &[u8] = b"Str0ngP@ssword!";
 const CONTEXT: &[u8] = b"sid-op-context";
@@ -32,9 +31,9 @@ fn fixture(domains: usize) -> Fixture {
     let verifier = ZkppVerifier::new(params.clone(), pk.get_vk().clone(), shape);
     let prover = ZkppProver::new(params, pk, shape);
     let keys: Vec<_> = (0..domains)
-        .map(|_| pallas::Scalar::random(OsRng))
+        .map(|_| pallas::Scalar::random(&mut rand::rng()))
         .collect();
-    let blind = pallas::Scalar::random(OsRng);
+    let blind = pallas::Scalar::random(&mut rand::rng());
     let bound = prover
         .prove(
             PASSWORD,
@@ -133,7 +132,7 @@ fn instances_and_element_are_checked_first() {
         f.verifier.verify(&short, CONTEXT, f.m),
         Err(ZkppVerifyError::InstanceCountMismatch { .. })
     ));
-    let other = (pallas::Point::generator() * pallas::Scalar::random(OsRng)).to_affine();
+    let other = (pallas::Point::generator() * pallas::Scalar::random(&mut rand::rng())).to_affine();
     assert!(matches!(
         f.verifier.verify(&f.bound, CONTEXT, other),
         Err(ZkppVerifyError::ElementMismatch)
