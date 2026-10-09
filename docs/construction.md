@@ -66,12 +66,17 @@ verifier refuses outside the SNARK when it decodes and compares `M`.
    `M = b·H_M`. `M` is the instance the verifier compares with the element of
    the client's OPAQUE registration request.
 4. **History tags (gadget H).** `u = Poseidon(d, u_P)`;
-   `H ∈ E_p`, `x(H) = u + o`, `o` the **minimal** offset in `[0, 2^8)` with
+   `H ∈ E_p`, `x(H) = u + o`, `o` the **minimal** offset in `[0, 2^8]` with
    `x³ + 5` a square: for every `i < o`, a witness `w_i ≠ 0` with
    `w_i² = g·((u+i)³ + 5)`, `g` the fixed non-square (the multiplicative
    generator of `F_p`); `y(H) = 2h` with `h < 2^253` (the even root);
    `r ≠ 0`; `B = r·H`; for each `j`: `Z_j = r·N_j`,
    `t_j = chain(c_j, u, x(N_j))`.
+   The scan has 2^8 rows and does not constrain the last one, so `o = 2^8`
+   is provable when the 2^8 candidates before it are all non-squares
+   (probability 2^-256 over `u`); `o` is still minimal and `H` still a
+   function of `u`. The native mapping (`canonical_point`) tries only
+   `[0, 2^8)` and panics on such a `u`, so no client produces that proof.
 
 The gadgets share cells: the policy gadget's bytes are packed by constrained
 Horner steps and copy-constrained to the field elements gadget C hashes;
@@ -88,11 +93,19 @@ ctx = "SID_ZKPP_PASSWORD_OPERATION_v1" ‖ operation id (16 bytes) ‖ OPAQUE re
 transcript_context(ctx) = from_uniform_bytes(SHA-512("SID_ZKPP_TRANSCRIPT_CONTEXT_v1" ‖ len(ctx) u64 LE ‖ ctx))
 ```
 
-The operation id is fresh per operation; the server keeps the operation's
-owner, purpose, expected credential and history revisions, policy and required
-comparison domains in its sealed operation state, not in the transcript. Each
-operation installs its password under its own OPRF credential identifier
-(RFC 9807 §5), evaluated for exactly one request, the one in `ctx`.
+This crate builds `ctx` from the bytes it is given (`operation_context`) and
+absorbs whatever context the caller passes to the prover and verifier; it
+neither creates nor tracks operations.
+
+**Requirement on the integrating server (not implemented here).** It
+generates a fresh operation id per operation, builds `ctx` with that id and
+the operation's request, and accepts each operation once. It keeps the
+operation's owner, purpose, expected credential and history revisions, policy
+and required comparison domains in its sealed operation state, not in the
+transcript, and installs each operation's password under its own OPRF
+credential identifier (RFC 9807 §5), evaluated for exactly one request, the
+one in `ctx`. A reused id or a context without it lets one proof stand for
+another operation.
 
 ## History evaluation (outside the SNARK)
 
@@ -101,8 +114,14 @@ operation installs its password under its own OPRF credential identifier
   (RFC 9497 §2.2 for one element), challenge
   `hash_to_scalar(len(op) ‖ op ‖ pk ‖ B ‖ Z ‖ T2 ‖ T3; "SID-HISTORY-VOPRF-DLEQ-v1")`
   over SHA-256, bound to the operation id `op`.
-- Before the SNARK the server compares the proof's claimed `d`, `B`, `c_j` and
-  `Z_j` with what the operation holds. After it, the checker verifies each DLEQ
+- **Requirement on the integrating server (not implemented here).** The
+  verifier checks the proof against the instances it carries and compares
+  only `M` with the request; `claimed_inputs` merely reads the proof's `d`,
+  `B`, `c_j` and `Z_j`. Before the SNARK the server compares every one of
+  them with its sealed operation state. Otherwise a client proves against
+  an owner or comparison domain of its choice, and its tags never match the
+  retained history although the SNARK and DLEQ proofs verify.
+- After the SNARK, the checker verifies each DLEQ
   proof against the epoch's stored public key. With `Z_j = k_j·B = k_j·r·H` and
   `Z_j = r·N_j` in the circuit (`r ≠ 0`, prime order), `N_j = k_j·H`, so
   `t_j = chain(c_j, u, x(k_j·H))` is a function of `P`, `d`, `c_j` and `k_j`
