@@ -43,7 +43,8 @@ The evaluator never receives `t_j` or retained entries; the checker never holds
   - owner domain `d = domain_element("SID-HISTORY-INPUT-v1", [installation id, owner id])`;
   - comparison domain `c_j = domain_element("SID-HISTORY-TAG-v1", [suite, epoch id, KSF memory ‖ passes ‖ lanes (u32 LE each), epoch salt])`.
 - **Points** are compressed 32-byte Pallas encodings; the identity is refused
-  wherever a point is decoded.
+  wherever a point is decoded: OPRF elements, key-exchange public keys (RFC
+  9807 §6.4.1), the request element `M` and the history points.
 
 ## Relation proved by the SNARK
 
@@ -107,8 +108,7 @@ operation installs its password under its own OPRF credential identifier
   `t_j = chain(c_j, u, x(k_j·H))` is a function of `P`, `d`, `c_j` and `k_j`
   only.
 - **Checker.** For each domain, `s_j = Argon2id(t_j, salt_j, m, t, p)` with
-  the epoch's immutable parameters, under a memory reservation taken before
-  the KSF starts. `s_j` is compared in constant time with every retained entry
+  the epoch's immutable parameters. `s_j` is compared in constant time with every retained entry
   of that domain; a match refuses the password. `t_j` and rejected `s_j` are
   never stored.
 - **Requirement on the integrating server (not implemented here).** This
@@ -118,6 +118,11 @@ operation installs its password under its own OPRF credential identifier
   only if the owner's history revision is still the one read at preparation.
   Without that compare-and-swap, two concurrent operations can both pass
   against the same history and one history update is lost.
+- **Requirement on the integrating server (not implemented here).** This
+  crate runs the KSF as soon as it is called. The server must bound the
+  memory concurrent checks take (a reservation of the epoch's `m` before each
+  KSF starts, refused or queued when the budget is spent); otherwise
+  concurrent checks allocate without limit.
 
 ## One password, end to end
 

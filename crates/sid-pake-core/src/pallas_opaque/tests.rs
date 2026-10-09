@@ -224,6 +224,15 @@ fn test_ke_derive_scalar_is_deterministic() {
 }
 
 #[test]
+fn test_ke_pk_rejects_the_identity() {
+    // RFC 9807 §6.4.1: DeserializeElement fails on the identity; a peer's
+    // key-exchange key is decoded the same way, or TripleDH multiplies by it.
+    let bytes = pallas::Point::identity().to_bytes();
+    let mut reader: &[u8] = &bytes;
+    assert!(<PallasGroup as KeGroup>::deserialize_take_pk(&mut reader).is_err());
+}
+
+#[test]
 fn test_ke_pk_roundtrip() {
     let mut rng = rand::rng();
     let sk = <PallasGroup as KeGroup>::random_sk(&mut rng);
