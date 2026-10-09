@@ -57,8 +57,9 @@ fn recording(seed: u64) -> Recording {
     }
 }
 
-/// One registration and one login of `password`, as a JSON object.
-fn vector(case: u64, password: &[u8], login_password: &[u8]) -> String {
+/// One registration and one login of `password` under the OPAQUE `context`
+/// (RFC 9807 §6), as a JSON object.
+fn vector(case: u64, password: &[u8], login_password: &[u8], context: &[u8]) -> String {
     let mut server_rng = StdRng::seed_from_u64(1_000 + case);
     let setup = ServerSetup::<PallasCipherSuite>::new(&mut server_rng);
 
@@ -95,14 +96,20 @@ fn vector(case: u64, password: &[u8], login_password: &[u8]) -> String {
         Some(file),
         login.message.clone(),
         b"credential",
-        ServerLoginParameters::default(),
+        ServerLoginParameters {
+            context: Some(context),
+            ..ServerLoginParameters::default()
+        },
     )
     .expect("server login start");
     let login_finished = login.state.clone().finish(
         &mut login_rng,
         login_password,
         server_login.message.clone(),
-        ClientLoginFinishParameters::default(),
+        ClientLoginFinishParameters {
+            context: Some(context),
+            ..ClientLoginFinishParameters::default()
+        },
     );
     let outcome = match login_finished {
         Ok(f) => format!(
@@ -115,13 +122,14 @@ fn vector(case: u64, password: &[u8], login_password: &[u8]) -> String {
         Err(e) => format!("\"loginError\":\"{e}\""),
     };
     format!(
-        "{{\"password\":\"{}\",\"loginPassword\":\"{}\",\
+        "{{\"password\":\"{}\",\"loginPassword\":\"{}\",\"context\":\"{}\",\
          \"registrationStartDrawn\":\"{}\",\"registrationRequest\":\"{}\",\"registrationState\":\"{}\",\
          \"registrationResponse\":\"{}\",\"registrationFinishDrawn\":\"{}\",\"registrationRecord\":\"{}\",\
          \"loginStartDrawn\":\"{}\",\"credentialRequest\":\"{}\",\"loginState\":\"{}\",\
          \"credentialResponse\":\"{}\",{outcome}}}",
         hex(password),
         hex(login_password),
+        hex(context),
         hex(&start_drawn),
         hex(&start.message.serialize()),
         hex(&start.state.serialize()),
@@ -137,15 +145,30 @@ fn vector(case: u64, password: &[u8], login_password: &[u8]) -> String {
 
 fn main() {
     let long = vec![b'a'; 130];
+    // A sign-in inside another operation: a label, a 16-byte operation id
+    // and a 32-byte digest, the shape a password change's confirmation has.
+    let operation_context = [
+        b"SID-PASSWORD-CHANGE-v1".as_slice(),
+        &[0x11; 16],
+        &[0x22; 32],
+    ]
+    .concat();
     let cases: Vec<String> = vec![
-        vector(0, b"Str0ngP@ssword!", b"Str0ngP@ssword!"),
+        vector(0, b"Str0ngP@ssword!", b"Str0ngP@ssword!", &[]),
         vector(
             1,
             "пароль-Ünïcode-1".as_bytes(),
             "пароль-Ünïcode-1".as_bytes(),
+            &[],
         ),
-        vector(2, &long, &long),
-        vector(3, b"Correct-Horse-9", b"Wrong-Horse-9"),
+        vector(2, &long, &long, &[]),
+        vector(3, b"Correct-Horse-9", b"Wrong-Horse-9", &[]),
+        vector(
+            4,
+            b"Str0ngP@ssword!",
+            b"Str0ngP@ssword!",
+            &operation_context,
+        ),
     ];
     let out = std::env::args()
         .nth(1)
