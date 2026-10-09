@@ -114,12 +114,30 @@ fn proof_layout(
     recorder.layout
 }
 
+/// Domain separation of [`ZkppVerifier::artifact`].
+const ARTIFACT_PURPOSE: &[u8] = b"SID-ZKPP-ARTIFACT-v1";
+
+/// The identity of the artifact `vk` is: SHA-256 over halo2's pinned
+/// verifying key (parameters, constraint system, fixed commitments, which
+/// carry the policy constants, and permutation). Keys that accept different
+/// proofs differ in it, so evidence naming it names exactly what verified.
+fn artifact_of(vk: &VerifyingKey<vesta::Affine>) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let pinned = format!("{:?}", vk.pinned());
+    let mut hash = Sha256::new();
+    hash.update(ARTIFACT_PURPOSE);
+    hash.update((pinned.len() as u64).to_le_bytes());
+    hash.update(pinned.as_bytes());
+    hash.finalize().into()
+}
+
 /// ZKPP Verifier — verifies proofs and extracts public inputs.
 pub struct ZkppVerifier {
     params: Params<vesta::Affine>,
     vk: VerifyingKey<vesta::Affine>,
     shape: CircuitShape,
     layout: Vec<Element>,
+    artifact: [u8; 32],
 }
 
 impl ZkppVerifier {
@@ -131,16 +149,24 @@ impl ZkppVerifier {
         shape: CircuitShape,
     ) -> Self {
         let layout = proof_layout(&params, &vk, shape);
+        let artifact = artifact_of(&vk);
         Self {
             params,
             vk,
             shape,
             layout,
+            artifact,
         }
     }
 
     pub fn shape(&self) -> CircuitShape {
         self.shape
+    }
+
+    /// The identity of this verifier's artifact, recorded as the evidence of
+    /// every proof it accepts so a retired artifact's verdicts can be found.
+    pub fn artifact(&self) -> [u8; 32] {
+        self.artifact
     }
 
     /// The exact length in bytes of every proof under this key.

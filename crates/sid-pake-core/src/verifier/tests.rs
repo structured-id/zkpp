@@ -174,3 +174,24 @@ fn claimed_inputs_match_the_verified_ones() {
     let truncated = with_proof(&f.bound, f.bound.snark_proof.0[..64].to_vec());
     assert!(f.verifier.claimed_inputs(&truncated).is_err());
 }
+
+/// An artifact's identity is a function of its key: regenerating the key for
+/// the same shape (keygen is deterministic) gives the same identity, so every
+/// replica records the same evidence; a key accepting other proofs (another
+/// domain count) has another identity, so evidence never names the wrong one.
+#[test]
+fn the_artifact_identity_follows_the_key() {
+    let shape = |domains| CircuitShape {
+        policy: CE_DEFAULT_POLICY,
+        history_domains: domains,
+    };
+    let params = generate_params(ZKPP_K);
+    let artifact = |domains| {
+        let pk = generate_pk(&params, shape(domains)).unwrap();
+        ZkppVerifier::new(params.clone(), pk.get_vk().clone(), shape(domains)).artifact()
+    };
+    let one = artifact(1);
+    assert_eq!(one, artifact(1), "same key, same identity");
+    assert_ne!(one, artifact(2), "another domain count, another identity");
+    assert_ne!(one, [0u8; 32]);
+}
