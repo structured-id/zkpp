@@ -4,9 +4,10 @@ This document states the relation `sid-pake-core` proves and verifies when a
 password is installed (registration, password change, authorized reset), the
 encodings it relies on, and the checks that happen outside the proof. It is
 written for an independent cryptographic review: every statement below is
-taken from the code in this repository, and the limits of what the relation
-establishes are listed explicitly. It is not a claim that the composition has
-been reviewed.
+taken from the code in this repository unless it is marked as a requirement
+on the integrating server, and the limits of what the relation establishes
+are listed explicitly. It is not a claim that the composition has been
+reviewed.
 
 Notation: Pallas `E_p: y² = x³ + 5` over the base field `F_p`, scalar field
 `F_q` (`p < q`), generator `G`. Poseidon is the P128Pow5T3 permutation
@@ -35,7 +36,10 @@ The evaluator never receives `t_j` or retained entries; the checker never holds
   active bytes to form a prefix, so `P ↦ P̂` is injective on provable inputs.
 - **Domain elements.** `domain_element(purpose, parts)` is `chain` over the
   packed bytes of `len(purpose) ‖ purpose ‖ len(part_1) ‖ part_1 ‖ ...`, every
-  length a little-endian `u32`, so no two part lists collide.
+  length a little-endian `u32`. The packing zero-pads the last field element
+  and encodes no part count, so the encoding is injective only among part
+  lists of the same length: `("x", [])` and `("x", [""])` collide. Each
+  purpose therefore has a fixed number of parts, which its callers must keep:
   - owner domain `d = domain_element("SID-HISTORY-INPUT-v1", [installation id, owner id])`;
   - comparison domain `c_j = domain_element("SID-HISTORY-TAG-v1", [suite, epoch id, KSF memory ‖ passes ‖ lanes (u32 LE each), epoch salt])`.
 - **Points** are compressed 32-byte Pallas encodings; the identity is refused
@@ -46,8 +50,10 @@ The evaluator never receives `t_j` or retained entries; the checker never holds
 Public instances, for `D` comparison domains (`5 + 4D` field elements):
 `M.x, M.y, d, c_1..c_D, B.x, B.y, (Z_j.x, Z_j.y, t_j) for j = 1..D`.
 
-Witness: `P`, `b ∈ F_p \ {0}` (used as an integer in `F_q`), `r ∈ F_p \ {0}`,
+Witness: `P`, `b ∈ F_p` (used as an integer in `F_q`), `r ∈ F_p \ {0}`,
 `H_M`, its offset, `H`, its offset and non-square witnesses, `N_1..N_D`.
+The circuit does not constrain `b ≠ 0`: `b = 0` gives `M = O`, which the
+verifier refuses outside the SNARK when it decodes and compares `M`.
 
 1. **Policy (gadget A).** `P` has at least the policy's minimum length and
    class counts. The minimums are fixed columns of the proving and verifying
@@ -103,10 +109,15 @@ operation installs its password under its own OPRF credential identifier
 - **Checker.** For each domain, `s_j = Argon2id(t_j, salt_j, m, t, p)` with
   the epoch's immutable parameters, under a memory reservation taken before
   the KSF starts. `s_j` is compared in constant time with every retained entry
-  of that domain; a match refuses the password. On acceptance the entry under
-  the active epoch is written in the same transaction as the credential, its
-  evidence and the operation result, against the history revision read at
-  preparation. `t_j` and rejected `s_j` are never stored.
+  of that domain; a match refuses the password. `t_j` and rejected `s_j` are
+  never stored.
+- **Requirement on the integrating server (not implemented here).** This
+  crate compares against the retained entries it is given and returns the new
+  entry. The server must write that entry under the active epoch in the same
+  transaction as the credential, its evidence and the operation result, and
+  only if the owner's history revision is still the one read at preparation.
+  Without that compare-and-swap, two concurrent operations can both pass
+  against the same history and one history update is lost.
 
 ## One password, end to end
 
@@ -117,8 +128,9 @@ operation installs its password under its own OPRF credential identifier
 5. Server: lengths and encodings, claimed inputs equal to the operation's,
    SNARK under the key for the policy and `D`, `M = M'`.
 6. Checker: DLEQ proofs, KSF per domain, comparison, accepted `s_j`.
-7. Commit: credential, evidence (policy version and verifying-key identity),
-   history entry and operation result, atomically.
+7. Commit (by the integrating server, see above): credential, evidence
+   (policy version and verifier identity), history entry and operation
+   result, atomically.
 
 ## What the relation does not establish
 
@@ -128,9 +140,11 @@ operation installs its password under its own OPRF credential identifier
   derived from `P`. That record is its own; it cannot borrow another
   operation's evaluation, because the credential's OPRF key evaluated only `M`.
 - **Canonical `H_M`.** Gadget C does not require the minimal offset or a fixed
-  sign of `y` for `H_M`. A non-standard choice changes `M` only, so the record
-  is unusable for login; it does not affect the history tags, which use the
-  canonical `H`.
+  sign of `y` for `H_M`, so one password has several provable `M`. A
+  non-standard choice changes `M` only: a login with the published SDK's
+  canonical mapping then fails, while a deviating client that repeats its own
+  mapping at login opens its own record. It does not affect the history tags,
+  which use the canonical `H`.
 - **Breach coverage.** The compiled Bloom filter is a fixed demonstration
   table; it is not evidence against a production breach corpus.
 - **Server compromise.** A party that holds `k_j` and obtains `t_j` for some

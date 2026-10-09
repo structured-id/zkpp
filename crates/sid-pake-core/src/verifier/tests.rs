@@ -195,3 +195,26 @@ fn the_artifact_identity_follows_the_key() {
     assert_ne!(one, artifact(2), "another domain count, another identity");
     assert_ne!(one, [0u8; 32]);
 }
+
+/// Verification also reads the parameters, and their IPA generator `u` is
+/// not part of the verifying key: the same key under parameters with another
+/// `u` is another verifier and must have another identity.
+#[test]
+fn the_artifact_identity_follows_the_parameters() {
+    let shape = CircuitShape {
+        policy: CE_DEFAULT_POLICY,
+        history_domains: 1,
+    };
+    let params = generate_params(ZKPP_K);
+    let vk = generate_pk(&params, shape).unwrap().get_vk().clone();
+    let mut bytes = Vec::new();
+    params.write(&mut bytes).unwrap();
+    // `u` is the last point of the serialization.
+    let at = bytes.len() - 32;
+    bytes[at..].copy_from_slice(&vesta::Affine::generator().to_bytes());
+    let other = Params::<vesta::Affine>::read(&mut bytes.as_slice()).unwrap();
+    assert_ne!(
+        ZkppVerifier::new(params, vk.clone(), shape).artifact(),
+        ZkppVerifier::new(other, vk, shape).artifact(),
+    );
+}
