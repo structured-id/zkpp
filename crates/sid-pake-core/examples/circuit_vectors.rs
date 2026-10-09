@@ -5,8 +5,14 @@
 //! fixed and permutation commitments), and the SRS the keys are built over.
 //!
 //! `cargo run --release -p sid-pake-core --example circuit_vectors -- <dir>`
-//! writes `<dir>/pinned-<policy>-<domains>.txt` and `<dir>/srs-k11.bin`.
+//! writes `<dir>/pinned-<policy>-<domains>.txt`, `<dir>/srs-k11.bin`, and the
+//! OPAQUE element mapping vectors `<dir>/hash-to-curve.json` and
+//! `<dir>/gadget-c.json`.
 
+use ff::PrimeField;
+use group::Curve;
+use pasta_curves::{arithmetic::CurveAffine, pallas};
+use sid_pake_core::circuit::gadget_c::hash_to_curve_outside;
 use sid_pake_core::circuit::{CircuitShape, ZKPP_K};
 use sid_pake_core::keygen::{generate_params, generate_vk, write_params};
 use sid_pake_core::types::CE_DEFAULT_POLICY;
@@ -39,4 +45,45 @@ fn main() {
         )
         .expect("write the readable pinned key");
     }
+
+    // The OPAQUE element mapping (gadget C's witness): `H_p` for two passwords
+    // as written, and `M = 7·H_p`, field elements little-endian.
+    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    let fe = |v: pallas::Base| hex(&v.to_repr());
+    let (h, u, offset) = hash_to_curve_outside(b"Str0ngP@ssword!");
+    let h = h.coordinates().unwrap();
+    std::fs::write(
+        dir.join("hash-to-curve.json"),
+        format!(
+            r#"{{"password":"Str0ngP@ssword!","u":"{}","offset":{},"hpx":"{}","hpy":"{}"}}"#,
+            fe(u),
+            offset_u64(offset),
+            fe(*h.x()),
+            fe(*h.y())
+        ),
+    )
+    .expect("write the hash-to-curve vector");
+    let (h, u, _) = hash_to_curve_outside(b"Str0ngP@ss");
+    let blind = pallas::Scalar::from(7u64);
+    let m = (pallas::Point::from(h) * blind).to_affine();
+    let (h, m) = (h.coordinates().unwrap(), m.coordinates().unwrap());
+    std::fs::write(
+        dir.join("gadget-c.json"),
+        format!(
+            r#"{{"u":"{}","hpx":"{}","hpy":"{}","blind":"{}","mx":"{}","my":"{}"}}"#,
+            fe(u),
+            fe(*h.x()),
+            fe(*h.y()),
+            hex(&blind.to_repr()),
+            fe(*m.x()),
+            fe(*m.y())
+        ),
+    )
+    .expect("write the gadget C vector");
+}
+
+/// The offset as an integer: it is below 2^8 by construction.
+fn offset_u64(offset: pallas::Base) -> u64 {
+    let repr = offset.to_repr();
+    u64::from_le_bytes(repr[..8].try_into().unwrap())
 }

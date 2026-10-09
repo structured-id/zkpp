@@ -312,6 +312,10 @@ impl HistoryTagChip {
             },
         )?;
 
+        // The scan alone reaches 2^8 when every row is below the offset; the
+        // offset is bounded like Gadget C's, to the tries of `canonical_point`.
+        super::gadget_c::check_htc_offset(&config.ecc.lookup_config, layouter, count.clone())?;
+
         // Bind: x = u + offset, y = 2h, then r·r⁻¹ = 1 on the next row.
         let (h_cell, r_cell) = layouter.assign_region(
             || "history bind",

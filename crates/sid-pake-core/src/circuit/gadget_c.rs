@@ -348,14 +348,9 @@ impl OpaqueBinderChip {
             },
         )?;
 
-        // The offset is the try counter of `hash_to_curve_outside`, below
-        // HTC_TRIES = 2^8. Unbounded, it would move x onto any curve point
-        // and detach H_p from the password.
-        config.ecc_config.lookup_config.copy_short_check(
-            layouter.namespace(|| "offset < 2^8"),
-            offset_cell,
-            HTC_TRY_BITS,
-        )?;
+        // Unbounded, the offset would move x onto any curve point and detach
+        // H_p from the password.
+        check_htc_offset(&config.ecc_config.lookup_config, layouter, offset_cell)?;
 
         // Step 3: the OPAQUE element M = blind·H_p, computed here from the same
         // H_p, so the exposed M is the blinded hash of this password and of no
@@ -386,6 +381,16 @@ impl OpaqueBinderChip {
 /// Hash-to-curve tries `2^HTC_TRY_BITS` offsets; the circuit range-checks the
 /// offset to this width.
 pub const HTC_TRY_BITS: usize = 8;
+
+/// The bound every hash-to-curve offset in the circuit shares with the native
+/// mappings: `offset < 2^HTC_TRY_BITS`, the tries those mappings make.
+pub(crate) fn check_htc_offset(
+    lookup: &LookupRangeCheckConfig<pallas::Base, 10>,
+    layouter: &mut impl Layouter<pallas::Base>,
+    offset: AssignedCell<pallas::Base, pallas::Base>,
+) -> Result<(), Error> {
+    lookup.copy_short_check(layouter.namespace(|| "offset < 2^8"), offset, HTC_TRY_BITS)
+}
 
 /// Compute hash-to-curve outside the circuit (for witness generation).
 /// Poseidon → field element → constant-time scan of x=u+offset for y^2 = x^3 + 5
@@ -426,6 +431,11 @@ pub fn hash_to_curve_outside(password: &[u8]) -> (pallas::Affine, pallas::Base, 
         bool::from(found),
         "hash_to_curve: no valid point found in 256 tries"
     );
+    // Prescribed sign: the even root (sgn0 of RFC 9380 §4.1), as the history
+    // mapping takes, so the root is a rule and not one `sqrt`'s choice. The
+    // circuit does not constrain this sign.
+    let odd = Choice::from(sel_y.to_repr()[0] & 1);
+    let sel_y = pallas::Base::conditional_select(&sel_y, &-sel_y, odd);
     let point = pallas::Affine::from_xy(sel_x, sel_y).unwrap();
     (point, u, sel_offset)
 }

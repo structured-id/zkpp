@@ -2,6 +2,107 @@ use super::*;
 use halo2_proofs::{circuit::SimpleFloorPlanner, dev::MockProver, plonk::Circuit};
 use pasta_curves::arithmetic::CurveAffine;
 
+/// The shared offset bound alone, over one assigned `offset`.
+#[derive(Clone)]
+struct OffsetBoundCircuit {
+    offset: u64,
+}
+
+#[derive(Clone, Debug)]
+struct OffsetBoundConfig {
+    lookup: LookupRangeCheckConfig<pallas::Base, 10>,
+    value: Column<Advice>,
+    table: TableColumn,
+}
+
+impl Circuit<pallas::Base> for OffsetBoundCircuit {
+    type Config = OffsetBoundConfig;
+    type FloorPlanner = SimpleFloorPlanner;
+
+    fn without_witnesses(&self) -> Self {
+        self.clone()
+    }
+
+    fn configure(meta: &mut ConstraintSystem<pallas::Base>) -> Self::Config {
+        let running = meta.advice_column();
+        let value = meta.advice_column();
+        meta.enable_equality(running);
+        meta.enable_equality(value);
+        let constants = meta.fixed_column();
+        meta.enable_constant(constants);
+        let table = meta.lookup_table_column();
+        let lookup = LookupRangeCheckConfig::configure(meta, running, table);
+        OffsetBoundConfig {
+            lookup,
+            value,
+            table,
+        }
+    }
+
+    fn synthesize(
+        &self,
+        config: Self::Config,
+        mut layouter: impl Layouter<pallas::Base>,
+    ) -> Result<(), Error> {
+        layouter.assign_table(
+            || "table",
+            |mut table| {
+                for index in 0..(1u64 << 10) {
+                    table.assign_cell(
+                        || "idx",
+                        config.table,
+                        index as usize,
+                        || Value::known(pallas::Base::from(index)),
+                    )?;
+                }
+                Ok(())
+            },
+        )?;
+        let cell = layouter.assign_region(
+            || "offset",
+            |mut region| {
+                region.assign_advice(
+                    || "offset",
+                    config.value,
+                    0,
+                    || Value::known(pallas::Base::from(self.offset)),
+                )
+            },
+        )?;
+        check_htc_offset(&config.lookup, &mut layouter, cell)
+    }
+}
+
+/// The bound both gadgets share admits exactly the tries of the native
+/// mappings: 0 and 2^8 - 1 pass, 2^8 fails. This checks the bound, not an
+/// attack: a full Gadget H witness at 2^8 needs 2^8 consecutive non-squares.
+#[test]
+fn the_offset_bound_admits_exactly_the_tries() {
+    let run = |offset| {
+        MockProver::run(11, &OffsetBoundCircuit { offset }, vec![])
+            .unwrap()
+            .verify()
+    };
+    assert_eq!(run(0), Ok(()));
+    assert_eq!(run((1 << HTC_TRY_BITS) - 1), Ok(()));
+    assert!(run(1 << HTC_TRY_BITS).is_err());
+}
+
+/// The OPAQUE element mapping fixes the sign of `y` to the even root
+/// (sgn0 of RFC 9380 §4.1), as the history mapping does, so the OPRF is
+/// specified by a rule rather than by one `sqrt` implementation.
+#[test]
+fn the_opaque_mapping_takes_the_even_root() {
+    for i in 0..64 {
+        let mut password = [0u8; MAX_PASSWORD_LEN];
+        let text = format!("pw-{i}");
+        password[..text.len()].copy_from_slice(text.as_bytes());
+        let (point, _, _) = hash_to_curve_outside(&password);
+        let y = *point.coordinates().unwrap().y();
+        assert_eq!(y.to_repr()[0] & 1, 0, "{text}");
+    }
+}
+
 /// The binder over `password`, with the hash-to-curve witnesses (`h_p`,
 /// `offset`) either honest or chosen by a malicious prover.
 #[derive(Clone)]

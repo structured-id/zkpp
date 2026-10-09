@@ -46,6 +46,37 @@ The evaluator never receives `t_j` or retained entries; the checker never holds
   wherever a point is decoded: OPRF elements, key-exchange public keys (RFC
   9807 §6.4.1), the request element `M` and the history points.
 
+## The Pallas OPAQUE suite
+
+The OPAQUE configuration every password installed through this crate uses
+(RFC 9807 §7). It is a custom suite: Pallas is not an RFC 9497 group, the
+element mapping below is not an RFC 9380 hash-to-curve, and nothing here
+claims RFC 9497 conformance or its uniformity assumptions; the mapping is a
+bounded try-and-increment over Poseidon and reaches only the even-root half of
+the points.
+
+- **OPRF.** RFC 9497 OPRF mode (`modeOPRF`) with identifier
+  `Pallas-Poseidon-SHA256`, so `contextString = "OPRFV1-" ‖ 0x00 ‖ "-" ‖
+  "Pallas-Poseidon-SHA256"`; hash SHA-256; `Finalize` as in RFC 9497 §3.3.1.
+- **Group.** Pallas, generator `G`. Elements are 32-byte compressed encodings
+  (`x` little-endian, the sign of `y` in the top bit); the identity is refused
+  on decoding. Scalars are 32 bytes little-endian, canonical, nonzero.
+- **HashToGroup(P).** Ignores the DST. `P` is zero-padded to 128 bytes (a
+  longer `P` is taken as given and cannot be proved), packed as in
+  [Encodings](#encodings), and `u = chain(p_1, ..., p_5)`. The point is
+  `(x, y)` with `x = u + o`, `o` the smallest offset in `[0, 2^8)` with
+  `x³ + 5` a square, and `y` the even root (`sgn0(y) = 0`, RFC 9380 §4.1).
+  All 2^8 offsets are tried, so the time does not depend on `P`. An empty
+  input is refused.
+- **HashToScalar(m, DST).** `expand_message_xmd` with SHA-256 (RFC 9380
+  §5.3.1) to 64 bytes, read little-endian and reduced modulo `q`; empty input
+  refused.
+- **Key exchange.** 3DH (RFC 9807 §6) over Pallas with HKDF-SHA-256 and
+  HMAC-SHA-256; key pairs derived with `DeriveDiffieHellmanKeyPair` and the
+  RFC 9807 label. Empty context; the identities are the parties' public keys.
+- **KSF.** Argon2id v1.3, `m = 19456 KiB`, `t = 2`, `p = 1`, salt 16 zero
+  bytes, output the hash length.
+
 ## Relation proved by the SNARK
 
 Public instances, for `D` comparison domains (`5 + 4D` field elements):
@@ -66,17 +97,17 @@ verifier refuses outside the SNARK when it decodes and compares `M`.
    `M = b·H_M`. `M` is the instance the verifier compares with the element of
    the client's OPAQUE registration request.
 4. **History tags (gadget H).** `u = Poseidon(d, u_P)`;
-   `H ∈ E_p`, `x(H) = u + o`, `o` the **minimal** offset in `[0, 2^8]` with
+   `H ∈ E_p`, `x(H) = u + o`, `o` the **minimal** offset in `[0, 2^8)` with
    `x³ + 5` a square: for every `i < o`, a witness `w_i ≠ 0` with
    `w_i² = g·((u+i)³ + 5)`, `g` the fixed non-square (the multiplicative
    generator of `F_p`); `y(H) = 2h` with `h < 2^253` (the even root);
    `r ≠ 0`; `B = r·H`; for each `j`: `Z_j = r·N_j`,
    `t_j = chain(c_j, u, x(N_j))`.
-   The scan has 2^8 rows and does not constrain the last one, so `o = 2^8`
-   is provable when the 2^8 candidates before it are all non-squares
-   (probability 2^-256 over `u`); `o` is still minimal and `H` still a
-   function of `u`. The native mapping (`canonical_point`) tries only
-   `[0, 2^8)` and panics on such a `u`, so no client produces that proof.
+
+Both offsets, `o_M` and `o`, are bounded by one shared check: an 8-bit range
+check on the offset cell itself, the tries the native mappings make. Gadget H
+proves minimality in addition; gadget C does not need it (see "Canonical
+`H_M`" below).
 
 The gadgets share cells: the policy gadget's bytes are packed by constrained
 Horner steps and copy-constrained to the field elements gadget C hashes;
@@ -163,8 +194,9 @@ another operation.
   that deviates from the published SDK can upload a record that is not
   derived from `P`. That record is its own; it cannot borrow another
   operation's evaluation, because the credential's OPRF key evaluated only `M`.
-- **Canonical `H_M`.** Gadget C does not require the minimal offset or a fixed
-  sign of `y` for `H_M`, so one password has several provable `M`. A
+- **Canonical `H_M`.** The suite's mapping takes the minimal offset and the
+  even root, but gadget C requires neither for `H_M`, so one password has
+  several provable `M`. A
   non-standard choice changes `M` only: a login with the published SDK's
   canonical mapping then fails, while a deviating client that repeats its own
   mapping at login opens its own record. It does not affect the history tags,
