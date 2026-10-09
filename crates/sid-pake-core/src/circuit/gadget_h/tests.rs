@@ -302,6 +302,21 @@ fn an_offset_below_the_first_is_refused() {
     assert!(failures.contains("history bind"), "{failures}");
 }
 
+/// An offset past the tries, which a scan with every row below it would
+/// reach, fails the same `offset < 2^8` range check as Gadget C's. The
+/// non-square witnesses here are not genuine (2^8 consecutive non-squares
+/// are not practically found), so this shows the check is wired to the
+/// scan's offset, not a full witness that only the bound refuses.
+#[test]
+fn an_offset_past_the_tries_is_refused() {
+    let (u, mut w) = honest(PASSWORD);
+    w.offset = TRIES as u64;
+    w.w = vec![pallas::Base::ONE; TRIES];
+    let inst = instances(u, &w);
+    let failures = verify(PASSWORD, w, inst);
+    assert!(failures.contains("Lookup"), "{failures}");
+}
+
 /// The odd root is not the prescribed sign.
 #[test]
 fn the_odd_root_is_refused() {

@@ -311,8 +311,12 @@ impl sid_opaque_ke::key_exchange::group::Group for PallasGroup {
         bytes: &mut &[u8],
     ) -> Result<Self::Pk, sid_opaque_ke::errors::ProtocolError> {
         let repr = take_32(bytes)?;
-        let point = Option::from(pallas::Point::from_bytes(&repr))
+        let point: pallas::Point = Option::from(pallas::Point::from_bytes(&repr))
             .ok_or(sid_opaque_ke::errors::ProtocolError::SerializationError)?;
+        // RFC 9807 §6.4.1: the identity is not a valid public key.
+        if bool::from(point.is_identity()) {
+            return Err(sid_opaque_ke::errors::ProtocolError::SerializationError);
+        }
         Ok(PallasElem(point))
     }
 

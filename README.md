@@ -23,6 +23,10 @@ The crate `sid-pake-core` contains:
 
 It builds on `halo2_proofs` 0.4.0 as published on crates.io, with no fork.
 
+[docs/construction.md](docs/construction.md) states the relation, its
+encodings, the checks outside the proof and what the relation does not
+establish, for independent review.
+
 ## Clients
 
 Browsers prove with the TypeScript client

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Poseidon hash configuration for OPAQUE-ZKPP.
 //!
-//! Uses the P128Pow5T3 spec (width=3, rate=2) from halo2_gadgets,
-//! native to Pallas base field. Used both in-circuit (Gadget B commitment
-//! verification) and outside circuit (server-side commitment storage).
+//! Uses the P128Pow5T3 spec (width=3, rate=2) from halo2_gadgets, native to
+//! the Pallas base field. The circuit and the native code hash the same way:
+//! the password hash of the OPAQUE binder, the history input and tag, and the
+//! domain-separation elements.
 
 use halo2_gadgets::poseidon::primitives::{self as poseidon, ConstantLength};
 use pasta_curves::pallas;
@@ -18,10 +19,7 @@ pub const POSEIDON_RATE: usize = 2;
 /// Poseidon state width.
 pub const POSEIDON_WIDTH: usize = 3;
 
-/// Compute Poseidon hash outside of circuit (server-side).
-///
-/// Used by the server to compute `PoseidonHash(password_fe || salt_fe)`
-/// for history commitment storage.
+/// Poseidon over two field elements, as the circuit computes it.
 pub fn poseidon_hash_2(inputs: &[pallas::Base; 2]) -> pallas::Base {
     poseidon::Hash::<_, PoseidonSpec, ConstantLength<2>, POSEIDON_WIDTH, POSEIDON_RATE>::init()
         .hash(*inputs)
