@@ -6,13 +6,11 @@
 mod common;
 
 use common::history_evaluation;
-use ff::PrimeField;
 use group::GroupEncoding;
 use pasta_curves::pallas;
-use sid_opaque_ke::{ClientRegistration, ClientRegistrationStartResult};
 use sid_pake_core::circuit::CircuitShape;
+use sid_pake_core::client::{RegistrationStart, start_registration};
 use sid_pake_core::keygen::{generate_params, generate_pk};
-use sid_pake_core::pallas_opaque::PallasCipherSuite;
 use sid_pake_core::prover::ZkppProver;
 use sid_pake_core::types::{CE_DEFAULT_POLICY, PolicyParams};
 use sid_pake_core::verifier::ZkppVerifier;
@@ -27,19 +25,12 @@ const LAX: PolicyParams = PolicyParams {
 const CE: CircuitShape = CircuitShape::single_domain(CE_DEFAULT_POLICY);
 const LAX_SHAPE: CircuitShape = CircuitShape::single_domain(LAX);
 
-fn start(password: &[u8]) -> ClientRegistrationStartResult<PallasCipherSuite> {
-    ClientRegistration::<PallasCipherSuite>::start(&mut rand::rng(), password)
-        .expect("registration start")
+fn start(password: &[u8]) -> RegistrationStart {
+    start_registration(&mut rand::rng(), password).expect("registration start")
 }
 
-fn blind(start: &ClientRegistrationStartResult<PallasCipherSuite>) -> pallas::Scalar {
-    let mut repr = <pallas::Scalar as PrimeField>::Repr::default();
-    repr.copy_from_slice(&start.state.serialize()[..32]);
-    pallas::Scalar::from_repr(repr).unwrap()
-}
-
-fn element(start: &ClientRegistrationStartResult<PallasCipherSuite>) -> pallas::Affine {
-    let request = start.message.serialize();
+fn element(start: &RegistrationStart) -> pallas::Affine {
+    let request = start.request.serialize();
     pallas::Affine::from_bytes(request.as_slice().try_into().unwrap()).unwrap()
 }
 
@@ -55,11 +46,11 @@ fn a_prover_chosen_policy_does_not_make_a_weak_password_compliant() {
 
     let password = b"abc";
     let start = start(password);
-    let request = start.message.serialize();
+    let request = start.request.serialize();
     let bound = prover
         .prove(
             password,
-            blind(&start),
+            start.blind(),
             &request,
             &history_evaluation(password),
         )
@@ -83,11 +74,11 @@ fn a_proof_under_another_policy_key_is_refused() {
 
     let password = b"Str0ngP@ssword!";
     let start = start(password);
-    let request = start.message.serialize();
+    let request = start.request.serialize();
     let bound = prover
         .prove(
             password,
-            blind(&start),
+            start.blind(),
             &request,
             &history_evaluation(password),
         )
@@ -106,13 +97,13 @@ fn the_servers_key_does_not_prove_a_weak_password() {
 
     let password = b"abc";
     let start = start(password);
-    let request = start.message.serialize();
+    let request = start.request.serialize();
 
     assert!(
         prover
             .prove(
                 password,
-                blind(&start),
+                start.blind(),
                 &request,
                 &history_evaluation(password)
             )

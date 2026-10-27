@@ -14,6 +14,7 @@
 
 pub mod binding;
 pub mod circuit;
+pub mod client;
 pub mod history;
 pub mod keygen;
 pub mod pallas_opaque;

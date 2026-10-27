@@ -4,16 +4,15 @@
 //! Run: cargo bench -p sid-pake-core
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use ff::{Field, PrimeField};
+use ff::Field;
 use group::GroupEncoding;
 use pasta_curves::pallas;
-use sid_opaque_ke::ClientRegistration;
 use sid_pake_core::circuit::{CircuitShape, ZKPP_K};
+use sid_pake_core::client::start_registration;
 use sid_pake_core::history::{
     blind_request, domain_element, evaluate, history_input, random_blind,
 };
 use sid_pake_core::keygen::{generate_params, generate_pk, generate_vk};
-use sid_pake_core::pallas_opaque::PallasCipherSuite;
 use sid_pake_core::prover::{HistoryEvaluation, ZkppProver};
 use sid_pake_core::types::CE_DEFAULT_POLICY;
 use sid_pake_core::verifier::ZkppVerifier;
@@ -21,15 +20,12 @@ use sid_pake_core::verifier::ZkppVerifier;
 const PASSWORD: &[u8] = b"Str0ngP@ssword!";
 
 /// A client's OPAQUE registration request for `password`: its bytes, its OPRF
-/// element `M` and the blind behind it (the state starts with the blind).
+/// element `M` and the blind behind it.
 fn registration_request(password: &[u8]) -> (Vec<u8>, pallas::Affine, pallas::Scalar) {
-    let start = ClientRegistration::<PallasCipherSuite>::start(&mut rand::rng(), password).unwrap();
-    let bytes = start.message.serialize().to_vec();
+    let start = start_registration(&mut rand::rng(), password).unwrap();
+    let bytes = start.request.serialize().to_vec();
     let m = pallas::Affine::from_bytes(bytes.as_slice().try_into().unwrap()).unwrap();
-    let mut repr = <pallas::Scalar as PrimeField>::Repr::default();
-    repr.copy_from_slice(&start.state.serialize()[..32]);
-    let blind = pallas::Scalar::from_repr(repr).unwrap();
-    (bytes, m, blind)
+    (bytes, m, start.blind())
 }
 
 /// The evaluator's answers for `password` over `domains` keys.

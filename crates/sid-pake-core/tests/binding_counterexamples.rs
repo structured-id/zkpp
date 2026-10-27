@@ -9,17 +9,15 @@
 mod common;
 
 use common::history_evaluation;
-use ff::PrimeField;
 use group::{Curve, Group};
 use pasta_curves::arithmetic::{CurveAffine, CurveExt};
 use pasta_curves::pallas;
-use sid_opaque_ke::ClientRegistration;
 use sid_pake_core::binding::operation_context;
 use sid_pake_core::circuit::CircuitShape;
 use sid_pake_core::circuit::gadget_c::hash_to_curve_outside;
+use sid_pake_core::client::start_registration;
 use sid_pake_core::keygen::{generate_params, generate_pk};
-use sid_pake_core::pallas_opaque::PallasCipherSuite;
-use sid_pake_core::prover::{BoundProof, ZkppProveError, ZkppProver};
+use sid_pake_core::prover::{BoundProof, ZkppProver};
 use sid_pake_core::types::{CE_DEFAULT_POLICY, MAX_PASSWORD_LEN};
 use sid_pake_core::verifier::{ZkppVerifier, ZkppVerifyError};
 
@@ -44,32 +42,23 @@ struct Honest {
 }
 
 fn honest(prover: &ZkppProver) -> Honest {
-    loop {
-        let start =
-            ClientRegistration::<PallasCipherSuite>::start(&mut rand::rng(), PASSWORD).unwrap();
-        let mut repr = <pallas::Scalar as PrimeField>::Repr::default();
-        repr.copy_from_slice(&start.state.serialize()[..32]);
-        let blind = pallas::Scalar::from_repr(repr).unwrap();
-        let request = start.message.serialize();
-        let context = operation_context(&OPERATION, &request);
-        match prover.prove(PASSWORD, blind, &context, &history_evaluation(PASSWORD)) {
-            Ok(proof) => {
-                let m = element(PASSWORD, blind);
-                assert_eq!(
-                    request.as_slice(),
-                    group::GroupEncoding::to_bytes(&m).as_ref()
-                );
-                return Honest {
-                    m,
-                    blind,
-                    context,
-                    proof,
-                };
-            }
-            // The client redraws a blind outside the base field.
-            Err(ZkppProveError::BlindOutOfRange) => continue,
-            Err(e) => panic!("prove: {e}"),
-        }
+    let start = start_registration(&mut rand::rng(), PASSWORD).unwrap();
+    let blind = start.blind();
+    let request = start.request.serialize();
+    let context = operation_context(&OPERATION, &request);
+    let proof = prover
+        .prove(PASSWORD, blind, &context, &history_evaluation(PASSWORD))
+        .expect("prove");
+    let m = element(PASSWORD, blind);
+    assert_eq!(
+        request.as_slice(),
+        group::GroupEncoding::to_bytes(&m).as_ref()
+    );
+    Honest {
+        m,
+        blind,
+        context,
+        proof,
     }
 }
 
