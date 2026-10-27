@@ -50,6 +50,16 @@ fn a_start_reports_the_blind_of_its_own_request() {
     ));
 }
 
+// A state kept and restored between calls still yields the blind of its
+// request.
+#[test]
+fn a_restored_state_yields_the_same_blind() {
+    let start = start_registration(&mut rand::rng(), PASSWORD).unwrap();
+    let restored =
+        ClientRegistration::<PallasCipherSuite>::deserialize(&start.state.serialize()).unwrap();
+    assert_eq!(registration_blind(&restored), start.blind());
+}
+
 // Two starts of one password draw independent blinds.
 #[test]
 fn each_start_draws_a_fresh_blind() {

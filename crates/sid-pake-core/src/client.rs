@@ -63,7 +63,7 @@ pub fn start_registration<R: CryptoRng>(
     for _ in 0..BLIND_ATTEMPTS {
         let started = ClientRegistration::<PallasCipherSuite>::start(rng, password)
             .map_err(StartError::Opaque)?;
-        let blind = state_blind(&started.state);
+        let blind = registration_blind(&started.state);
         if bool::from(pallas::Base::from_repr(blind.to_repr()).is_some()) {
             return Ok(RegistrationStart {
                 state: started.state,
@@ -75,9 +75,11 @@ pub fn start_registration<R: CryptoRng>(
     Err(StartError::NoUsableBlind)
 }
 
-/// The OPRF blind of a registration state: its serialization starts with it
-/// (`OprfClient` = blind scalar, then the blinded element).
-fn state_blind(state: &ClientRegistration<PallasCipherSuite>) -> pallas::Scalar {
+/// The OPRF blind of a registration state, for a client that keeps the state
+/// between calls: its serialization starts with it (`OprfClient` = blind
+/// scalar, then the blinded element). A state from [`start_registration`]
+/// holds a blind the circuit can hold.
+pub fn registration_blind(state: &ClientRegistration<PallasCipherSuite>) -> pallas::Scalar {
     let mut repr = <pallas::Scalar as PrimeField>::Repr::default();
     let len = repr.as_ref().len();
     repr.as_mut().copy_from_slice(&state.serialize()[..len]);
