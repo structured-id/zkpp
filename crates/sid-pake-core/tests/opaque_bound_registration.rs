@@ -6,11 +6,11 @@
 mod common;
 
 use common::history_evaluation;
-use ff::PrimeField;
 use group::GroupEncoding;
 use pasta_curves::pallas;
-use sid_opaque_ke::{ClientRegistration, ClientRegistrationStartResult, RegistrationRequest};
+use sid_opaque_ke::RegistrationRequest;
 use sid_pake_core::circuit::CircuitShape;
+use sid_pake_core::client::{RegistrationStart, start_registration};
 use sid_pake_core::keygen::{generate_params, generate_pk};
 use sid_pake_core::pallas_opaque::PallasCipherSuite;
 use sid_pake_core::prover::ZkppProver;
@@ -29,14 +29,6 @@ fn request_element(request: &RegistrationRequest<PallasCipherSuite>) -> pallas::
     Option::from(pallas::Affine::from_bytes(&bytes)).expect("the request element is a point")
 }
 
-/// The OPRF blind the client drew, read from its registration state
-/// (`OprfClient` = blind scalar, then the blinded element).
-fn client_blind(state: &ClientRegistration<PallasCipherSuite>) -> pallas::Scalar {
-    let mut repr = <pallas::Scalar as PrimeField>::Repr::default();
-    repr.copy_from_slice(&state.serialize()[..32]);
-    Option::from(pallas::Scalar::from_repr(repr)).expect("the state starts with the blind")
-}
-
 fn keys() -> (ZkppProver, ZkppVerifier) {
     let params = generate_params(sid_pake_core::circuit::ZKPP_K);
     let pk = generate_pk(&params, CE).expect("keygen");
@@ -44,9 +36,8 @@ fn keys() -> (ZkppProver, ZkppVerifier) {
     (ZkppProver::new(params, pk, CE), verifier)
 }
 
-fn start(password: &[u8]) -> ClientRegistrationStartResult<PallasCipherSuite> {
-    ClientRegistration::<PallasCipherSuite>::start(&mut rand::rng(), password)
-        .expect("registration start")
+fn start(password: &[u8]) -> RegistrationStart {
+    start_registration(&mut rand::rng(), password).expect("registration start")
 }
 
 /// A client proves its policy-valid password for the request it actually sends,
@@ -56,18 +47,18 @@ fn a_proof_for_the_registered_password_verifies_against_its_request() {
     let (prover, verifier) = keys();
     let password = b"Str0ngP@ssword!";
     let start = start(password);
-    let request_bytes = start.message.serialize();
+    let request_bytes = start.request.serialize();
     let bound = prover
         .prove(
             password,
-            client_blind(&start.state),
+            start.blind(),
             &request_bytes,
             &history_evaluation(password),
         )
         .expect("prove");
 
     let public = verifier
-        .verify(&bound, &request_bytes, request_element(&start.message))
+        .verify(&bound, &request_bytes, request_element(&start.request))
         .expect("the proof binds the element the request carries");
     assert_eq!(
         public.domains.len(),
@@ -81,12 +72,12 @@ fn a_proof_for_the_registered_password_verifies_against_its_request() {
 fn a_proof_for_another_password_does_not_verify_against_the_request() {
     let (prover, verifier) = keys();
     let weak = start(b"weak");
-    let request_bytes = weak.message.serialize();
+    let request_bytes = weak.request.serialize();
     let strong = b"Str0ngP@ssword!";
     let bound = prover
         .prove(
             strong,
-            client_blind(&weak.state),
+            weak.blind(),
             &request_bytes,
             &history_evaluation(strong),
         )
@@ -94,7 +85,7 @@ fn a_proof_for_another_password_does_not_verify_against_the_request() {
 
     assert!(
         verifier
-            .verify(&bound, &request_bytes, request_element(&weak.message))
+            .verify(&bound, &request_bytes, request_element(&weak.request))
             .is_err()
     );
 }
@@ -106,17 +97,17 @@ fn a_proof_is_bound_to_one_request_not_to_the_password() {
     let (prover, verifier) = keys();
     let password = b"N3wP@ssw0rd!xY";
     let first = start(password);
-    let request_bytes = first.message.serialize();
+    let request_bytes = first.request.serialize();
     let bound = prover
         .prove(
             password,
-            client_blind(&first.state),
+            first.blind(),
             &request_bytes,
             &history_evaluation(password),
         )
         .expect("prove");
     verifier
-        .verify(&bound, &request_bytes, request_element(&first.message))
+        .verify(&bound, &request_bytes, request_element(&first.request))
         .expect("the proof binds its own request");
 
     let other = start(password);
@@ -124,8 +115,8 @@ fn a_proof_is_bound_to_one_request_not_to_the_password() {
         verifier
             .verify(
                 &bound,
-                &other.message.serialize(),
-                request_element(&other.message)
+                &other.request.serialize(),
+                request_element(&other.request)
             )
             .is_err(),
         "the proof is bound to one request, not to the password"
