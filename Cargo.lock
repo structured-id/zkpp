@@ -1131,9 +1131,9 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sid-opaque-ke"
-version = "4.1.0"
+version = "4.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2869dd8b6be2d02ae1914a5e6008f497143ff704ef51d43b8e37eb5073a6dbd1"
+checksum = "dcef693d0db3f5fe389b55eda566f3da542d7d798be261533a819a26ae979e26"
 dependencies = [
  "argon2",
  "curve25519-dalek",
