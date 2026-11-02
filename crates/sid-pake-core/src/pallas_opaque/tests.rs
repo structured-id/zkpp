@@ -9,15 +9,14 @@ use subtle::ConstantTimeEq;
 
 use super::*;
 use crate::circuit::gadget_c::hash_to_curve_outside;
+use crate::types::MAX_PASSWORD_LEN;
 
 #[test]
 fn test_hash_to_curve_consistency() {
-    // The OPRF hash must equal the circuit's hash of the padded password
-    // buffer, the one the prover commits to.
+    // The OPRF hash must equal the circuit's hash of the password, the one the
+    // prover commits to.
     let password = b"Str0ngP@ssword!";
-    let mut padded = [0u8; MAX_PASSWORD_LEN];
-    padded[..password.len()].copy_from_slice(password);
-    let (native_point, _u, _offset) = hash_to_curve_outside(&padded);
+    let (native_point, _u, _offset) = hash_to_curve_outside(password);
     let native_projective = native_point.to_curve();
 
     let voprf_point =
@@ -241,4 +240,61 @@ fn test_ke_pk_roundtrip() {
     let mut reader: &[u8] = &bytes;
     let deserialized = <PallasGroup as KeGroup>::deserialize_take_pk(&mut reader).unwrap();
     assert!(bool::from(pk.ct_eq(&deserialized)));
+}
+
+fn opaque_point(password: &[u8]) -> pallas::Point {
+    PallasGroup::hash_to_curve::<sha2::Sha256>(&[password], &[b"dst"])
+        .unwrap()
+        .0
+}
+
+/// `value` as one 31-byte little-endian chunk, the unit the password is
+/// packed in.
+fn chunk(value: pallas::Base) -> [u8; 31] {
+    let repr = value.to_repr();
+    assert_eq!(repr[31], 0, "the value fits 31 bytes");
+    repr[..31].try_into().unwrap()
+}
+
+/// A password and the same bytes with a trailing NUL are different inputs:
+/// one OPRF evaluation must not answer for both (RFC 9497 §4.6).
+#[test]
+fn trailing_nul_is_another_password() {
+    assert_ne!(opaque_point(b"a"), opaque_point(b"a\0"));
+    let mut padded = b"Str0ngP@ss".to_vec();
+    padded.resize(MAX_PASSWORD_LEN, 0);
+    assert_ne!(opaque_point(b"Str0ngP@ss"), opaque_point(&padded));
+}
+
+/// The chain over a long input cannot be shortened: replacing its first two
+/// elements by their hash, which fits one chunk, is another password.
+#[test]
+fn long_input_chain_does_not_compress() {
+    let values: Vec<pallas::Base> = [173u64, 1, 2, 3, 4, 5]
+        .into_iter()
+        .map(pallas::Base::from)
+        .collect();
+    let head = crate::poseidon::poseidon_hash_2(&[values[0], values[1]]);
+    let long: Vec<u8> = values.iter().flat_map(|v| chunk(*v)).collect();
+    let short: Vec<u8> = core::iter::once(head)
+        .chain(values[2..].iter().copied())
+        .flat_map(chunk)
+        .collect();
+    assert_eq!((long.len(), short.len()), (186, 155));
+    assert_ne!(opaque_point(&long), opaque_point(&short));
+}
+
+/// Inputs at the packing and circuit boundaries each hash to their own point.
+#[test]
+fn boundary_lengths_hash_apart() {
+    let lengths = [1usize, 30, 31, 32, 62, 127, 128, 129, 155, 186];
+    let points: Vec<_> = lengths
+        .iter()
+        .map(|&n| opaque_point(&vec![b'x'; n]))
+        .collect();
+    for (i, a) in points.iter().enumerate() {
+        for b in &points[i + 1..] {
+            assert_ne!(a, b);
+        }
+    }
 }

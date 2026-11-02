@@ -7,10 +7,11 @@
 //!
 //! Critical invariant: `hash_to_curve` here MUST match circuit Gadget C's
 //! Poseidon-based hash-to-curve implementation exactly. Both use:
-//! 1. Zero-pad the password to `MAX_PASSWORD_LEN`, pack → field elements (31 bytes/FE, little-endian)
-//! 2. Poseidon hash chain → field element `u`
-//! 3. Trial: x = u + offset (offset ∈ 0..256), find y where y² = x³ + 5
-//! 4. Return first valid Pallas affine point
+//! 1. `u` = [`password_hash`](crate::poseidon::password_hash): the length step,
+//!    then the packed password (31 bytes/FE, little-endian, zero-padded to
+//!    `MAX_PASSWORD_LEN` when it fits)
+//! 2. Trial: x = u + offset (offset ∈ 0..256), find y where y² = x³ + 5
+//! 3. Return first valid Pallas affine point
 
 use core::num::NonZeroU16;
 use core::ops::{Add, Mul, Sub};
@@ -30,7 +31,6 @@ use subtle::{Choice, ConstantTimeEq};
 use zeroize::Zeroize;
 
 use crate::circuit::gadget_c::hash_to_curve_outside;
-use crate::types::MAX_PASSWORD_LEN;
 
 // ─── Newtype Wrappers ───
 
@@ -119,17 +119,6 @@ fn concat_slices(slices: &[&[u8]]) -> Vec<u8> {
     result
 }
 
-/// The password as the circuit hashes it: zero-padded to `MAX_PASSWORD_LEN`.
-/// The OPRF element must be `blind·H_p` of this same buffer, or no proof can
-/// bind it. A longer password cannot be
-/// proven and is hashed as given.
-fn circuit_password(mut bytes: Vec<u8>) -> Vec<u8> {
-    if bytes.len() < MAX_PASSWORD_LEN {
-        bytes.resize(MAX_PASSWORD_LEN, 0);
-    }
-    bytes
-}
-
 // ─── sid_voprf::Group ───
 
 /// Marker type for Pallas group in VOPRF context.
@@ -160,7 +149,9 @@ impl sid_voprf::Group for PallasGroup {
         if bytes.is_empty() {
             return Err(sid_voprf::InternalError::Input);
         }
-        let (affine_point, _u, _offset) = hash_to_curve_outside(&circuit_password(bytes));
+        // The circuit proves about the same password and its length; a longer
+        // password hashes as well and has no proof.
+        let (affine_point, _u, _offset) = hash_to_curve_outside(&bytes);
         Ok(PallasElem(affine_point.to_curve()))
     }
 
@@ -249,10 +240,12 @@ impl sid_voprf::Group for PallasGroup {
 // ─── sid_voprf::CipherSuite ───
 
 /// VOPRF CipherSuite: Pallas with Poseidon hash-to-curve and SHA-256 framing.
+/// `v2` is the hash that absorbs the password length; a credential or proof
+/// of the earlier hash is of another suite.
 pub struct PallasVoprf;
 
 impl sid_voprf::CipherSuite for PallasVoprf {
-    const ID: &'static str = "Pallas-Poseidon-SHA256";
+    const ID: &'static str = "Pallas-Poseidon-SHA256-v2";
     type Group = PallasGroup;
     type Hash = sha2::Sha256;
 }

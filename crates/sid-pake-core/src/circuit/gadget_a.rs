@@ -327,13 +327,14 @@ impl PolicyEngineChip {
 
     /// Synthesize the policy engine over the padded password and its active
     /// flags (1 for a password byte, 0 for padding). Returns the assigned
-    /// password byte cells for cross-gadget binding.
+    /// password byte cells and the length count, the number of active bytes,
+    /// for cross-gadget binding.
     pub fn synthesize(
         &self,
         layouter: &mut impl Layouter<pallas::Base>,
         password: &[Value<pallas::Base>; MAX_PASSWORD_LEN],
         active: &[Value<pallas::Base>; MAX_PASSWORD_LEN],
-    ) -> Result<Vec<AssignedCell<pallas::Base, pallas::Base>>, Error> {
+    ) -> Result<PolicyEngineOutput, Error> {
         let config = &self.config;
         let policy = &self.policy;
 
@@ -440,6 +441,7 @@ impl PolicyEngineChip {
                     policy.min_digit,
                     policy.min_symbol,
                 ];
+                let length = last_cells[0].clone();
                 for (k, (count, min)) in last_cells.iter().zip(minimums).enumerate() {
                     let row = MAX_PASSWORD_LEN + k;
                     config.q_cmp.enable(&mut region, row)?;
@@ -457,10 +459,19 @@ impl PolicyEngineChip {
                     )?;
                 }
 
-                Ok(byte_cells)
+                Ok(PolicyEngineOutput { byte_cells, length })
             },
         )
     }
+}
+
+/// What the policy engine hands the other gadgets.
+pub struct PolicyEngineOutput {
+    /// The password byte cells, padding included.
+    pub byte_cells: Vec<AssignedCell<pallas::Base, pallas::Base>>,
+    /// The length count: the number of active bytes, which the prefix and
+    /// non-zero constraints make the password's own length.
+    pub length: AssignedCell<pallas::Base, pallas::Base>,
 }
 
 #[cfg(test)]

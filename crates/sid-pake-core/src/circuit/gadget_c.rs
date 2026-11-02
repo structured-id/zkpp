@@ -268,13 +268,16 @@ impl OpaqueBinderChip {
 
     /// Synthesize: HashToCurve(password) → H_p, then M = blind·H_p.
     ///
-    /// Returns `OpaqueBinderOutput` including `pw_fe_cells` — the assigned
-    /// password field-element cells used as Poseidon input. The combined
-    /// circuit copy-constrains these to packed Gadget A bytes for binding.
+    /// `length` is the password's length count, the first thing the password
+    /// hash absorbs after its domain tag. Returns `OpaqueBinderOutput`
+    /// including `pw_fe_cells` — the assigned password field-element cells
+    /// used as Poseidon input. The combined circuit copy-constrains these to
+    /// packed Gadget A bytes and `length` to Gadget A's count.
     pub fn synthesize(
         &self,
         layouter: &mut impl Layouter<pallas::Base>,
         password: &[Value<pallas::Base>; MAX_PASSWORD_LEN],
+        length: &AssignedCell<pallas::Base, pallas::Base>,
         blind: Value<pallas::Base>,
         h_p: Value<pallas::Affine>,
         htc_offset: Value<pallas::Base>,
@@ -284,7 +287,8 @@ impl OpaqueBinderChip {
         // Load range check table (0..1023 for K=10)
         self.load_range_check_table(layouter)?;
 
-        // Step 1: Poseidon hash of password → u
+        // Step 1: the password hash u: Poseidon(tag, length), then each packed
+        // element in turn (`crate::poseidon::password_hash`).
         let password_fes = Self::pack_bytes_to_fes(password.as_slice());
 
         // Assign each FE into input_col (returned for cross-gadget binding)
@@ -295,18 +299,29 @@ impl OpaqueBinderChip {
             all_fe_cells.push(cell);
         }
 
-        let first = all_fe_cells[0].clone();
-        let second = all_fe_cells[1].clone();
-
+        // The domain tag is a constant of the circuit, not a witness.
+        let tag = layouter.assign_region(
+            || "password hash tag",
+            |mut region| {
+                region.assign_advice_from_constant(
+                    || "tag",
+                    config.input_col,
+                    0,
+                    crate::poseidon::password_hash_tag(),
+                )
+            },
+        )?;
         let poseidon_chip = Pow5Chip::construct(config.poseidon_config.clone());
         let hasher = PoseidonHash::<_, _, PoseidonSpec, ConstantLength<2>, 3, 2>::init(
             poseidon_chip,
-            layouter.namespace(|| "poseidon_init_0"),
+            layouter.namespace(|| "poseidon_init_length"),
         )?;
-        let mut u_hash = hasher.hash(layouter.namespace(|| "poseidon_hash_0"), [first, second])?;
+        let mut u_hash = hasher.hash(
+            layouter.namespace(|| "poseidon_hash_length"),
+            [tag, length.clone()],
+        )?;
 
-        for (idx, next) in all_fe_cells.iter().skip(2).enumerate() {
-            let idx = idx + 2;
+        for (idx, next) in all_fe_cells.iter().enumerate() {
             let next = next.clone();
             let chip = Pow5Chip::construct(config.poseidon_config.clone());
             let hasher = PoseidonHash::<_, _, PoseidonSpec, ConstantLength<2>, 3, 2>::init(
@@ -392,17 +407,16 @@ pub(crate) fn check_htc_offset(
     lookup.copy_short_check(layouter.namespace(|| "offset < 2^8"), offset, HTC_TRY_BITS)
 }
 
-/// Compute hash-to-curve outside the circuit (for witness generation).
-/// Poseidon → field element → constant-time scan of x=u+offset for y^2 = x^3 + 5
+/// Compute hash-to-curve outside the circuit (for witness generation) of the
+/// password as given, unpadded: [`password_hash`](crate::poseidon::password_hash)
+/// → field element → constant-time scan of x=u+offset for y^2 = x^3 + 5
 /// (fixed 256 trials, no early exit — no timing side-channel; RFC 9380 §10.1).
 pub fn hash_to_curve_outside(password: &[u8]) -> (pallas::Affine, pallas::Base, pallas::Base) {
-    use crate::poseidon::{bytes_to_field_elements, poseidon_hash_chain};
     use pasta_curves::arithmetic::CurveAffine;
 
     use subtle::{Choice, ConditionallySelectable};
 
-    let fes = bytes_to_field_elements(password);
-    let u = poseidon_hash_chain(&fes);
+    let u = crate::poseidon::password_hash(password);
 
     // Constant-time hash-to-curve: ALWAYS scan a fixed 256 offsets (no early exit)
     // and select the first offset whose x yields a square y via constant-time

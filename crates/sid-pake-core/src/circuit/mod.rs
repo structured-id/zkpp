@@ -148,6 +148,14 @@ impl ZkppCircuit {
         }
     }
 
+    /// The password itself: the first `password_len` bytes of the buffer.
+    ///
+    /// # Panics
+    /// If `password_len` exceeds the buffer.
+    pub fn password_bytes(&self) -> &[u8] {
+        &self.password[..self.password_len as usize]
+    }
+
     pub fn shape(&self) -> CircuitShape {
         CircuitShape {
             policy: self.policy,
@@ -164,13 +172,13 @@ impl ZkppCircuit {
         use pasta_curves::arithmetic::CurveAffine;
 
         // M = blind·H_p (public instances [0], [1]).
-        let (h_p, _, _) = hash_to_curve_outside(&self.password);
+        let (h_p, _, _) = hash_to_curve_outside(self.password_bytes());
         let m = (pallas::Point::from(h_p) * crate::history::blind_scalar(self.blind)).to_affine();
         let coords = m.coordinates().unwrap();
 
         let history = self.history.as_ref().expect("history inputs");
         assert_eq!(history.domains.len(), self.history_domains);
-        let u = crate::history::history_input(history.d, &self.password);
+        let u = crate::history::history_input(history.d, self.password_bytes());
         let (b, tags) = gadget_h::tag_instances(&history.domains, u, &history.witness);
         let b = b.coordinates().unwrap();
 
@@ -263,18 +271,22 @@ impl Circuit<pallas::Base> for ZkppCircuit {
             })
         });
 
-        // HashToCurve witness
-        let (h_p, _, offset) = hash_to_curve_outside(&self.password);
+        // HashToCurve witness. Key generation's empty buffer has length 0.
+        let (h_p, _, offset) = hash_to_curve_outside(self.password_bytes());
 
         // ── Gadget A: Policy Engine ──
         let policy_chip = PolicyEngineChip::construct(config.policy_engine.clone(), self.policy);
-        let pw_byte_cells = policy_chip.synthesize(&mut layouter, &pw_vals, &active)?;
+        let policy_out = policy_chip.synthesize(&mut layouter, &pw_vals, &active)?;
+        let pw_byte_cells = policy_out.byte_cells;
 
         // ── Gadget C: Opaque-Binder ──
+        // The hash absorbs Gadget A's own length count: the length is the one
+        // the policy measured, private like the password.
         let binder_chip = OpaqueBinderChip::construct(config.opaque_binder.clone());
         let binder_out = binder_chip.synthesize(
             &mut layouter,
             &pw_vals,
+            &policy_out.length,
             Value::known(self.blind),
             Value::known(h_p),
             Value::known(offset),

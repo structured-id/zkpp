@@ -18,7 +18,7 @@ use sid_pake_core::circuit::gadget_c::hash_to_curve_outside;
 use sid_pake_core::client::start_registration;
 use sid_pake_core::keygen::{generate_params, generate_pk};
 use sid_pake_core::prover::{BoundProof, ZkppProver};
-use sid_pake_core::types::{CE_DEFAULT_POLICY, MAX_PASSWORD_LEN};
+use sid_pake_core::types::CE_DEFAULT_POLICY;
 use sid_pake_core::verifier::{ZkppVerifier, ZkppVerifyError};
 
 const CE: CircuitShape = CircuitShape::single_domain(CE_DEFAULT_POLICY);
@@ -62,12 +62,10 @@ fn honest(prover: &ZkppProver) -> Honest {
     }
 }
 
-/// `blind·H(P)` over the zero-padded password, as the circuit and the OPAQUE
-/// suite hash it.
+/// `blind·H(P)` over the password, as the circuit and the OPAQUE suite hash
+/// it.
 fn element(password: &[u8], blind: pallas::Scalar) -> pallas::Affine {
-    let mut padded = [0u8; MAX_PASSWORD_LEN];
-    padded[..password.len()].copy_from_slice(password);
-    let (h, _, _) = hash_to_curve_outside(&padded);
+    let (h, _, _) = hash_to_curve_outside(password);
     (pallas::Point::from(h) * blind).to_affine()
 }
 

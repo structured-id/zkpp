@@ -17,6 +17,18 @@ struct HistoryTestCircuit {
     witness: HistoryTagWitness,
 }
 
+impl HistoryTestCircuit {
+    /// The password the buffer holds: its bytes up to the zero padding.
+    fn logical(&self) -> &[u8] {
+        let end = self
+            .password
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(MAX_PASSWORD_LEN);
+        &self.password[..end]
+    }
+}
+
 #[derive(Clone, Debug)]
 struct TestConfig {
     binder: OpaqueBinderConfig,
@@ -53,12 +65,25 @@ impl Circuit<pallas::Base> for HistoryTestCircuit {
         config: TestConfig,
         mut layouter: impl Layouter<pallas::Base>,
     ) -> Result<(), Error> {
-        let (h_p, _, offset) = hash_to_curve_outside(&self.password);
+        let (h_p, _, offset) = hash_to_curve_outside(self.logical());
         let password: [Value<pallas::Base>; MAX_PASSWORD_LEN] =
             core::array::from_fn(|i| Value::known(pallas::Base::from(u64::from(self.password[i]))));
+        let length = self.logical().len() as u64;
+        let length = layouter.assign_region(
+            || "length",
+            |mut region| {
+                region.assign_advice(
+                    || "length",
+                    config.binder.input_col,
+                    0,
+                    || Value::known(pallas::Base::from(length)),
+                )
+            },
+        )?;
         let binder = OpaqueBinderChip::construct(config.binder.clone()).synthesize(
             &mut layouter,
             &password,
+            &length,
             Value::known(pallas::Base::from(7u64)),
             Value::known(h_p),
             Value::known(offset),
