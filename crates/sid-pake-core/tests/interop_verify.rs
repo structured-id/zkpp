@@ -32,7 +32,7 @@ fn interop_pure_ts_proof_passes_rust_verify() {
     let d = domain_element(b"SID-HISTORY-INPUT-v1", &[b"interop", b"alice"]);
     let c = domain_element(b"SID-HISTORY-TAG-v1", &[b"epoch-0"]);
     let witness = HistoryTagWitness::honest(
-        history_input(d, &pw),
+        history_input(d, &pw[..10]),
         pallas::Base::from(11u64),
         &[pallas::Scalar::from(5u64)],
     );
