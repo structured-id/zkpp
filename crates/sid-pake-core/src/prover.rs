@@ -112,7 +112,7 @@ impl ZkppProver {
 
         let blind = Option::<pallas::Base>::from(pallas::Base::from_repr(blind.to_repr()))
             .ok_or(ZkppProveError::BlindOutOfRange)?;
-        let u = crate::history::history_input(history.d, &pw_buf);
+        let u = crate::history::history_input(history.d, password);
         let circuit = ZkppCircuit {
             password: pw_buf,
             // Bounded by MAX_PASSWORD_LEN, checked above.

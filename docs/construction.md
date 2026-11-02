@@ -29,11 +29,19 @@ The evaluator never receives `t_j` or retained entries; the checker never holds
 
 ## Encodings
 
-- **Password.** `P` is a byte string of at most 128 bytes with no zero byte.
-  It is zero-padded to 128 bytes and packed little-endian, 31 bytes per field
-  element, giving `P̂ = (p_1, ..., p_5) ∈ F_p^5`. The policy gadget requires
-  every active byte to be nonzero, every padding byte to be zero and the
-  active bytes to form a prefix, so `P ↦ P̂` is injective on provable inputs.
+- **Password.** A provable `P` is a byte string of at most 128 bytes with no
+  zero byte. It is zero-padded to 128 bytes and packed little-endian, 31 bytes
+  per field element, giving `P̂ = (p_1, ..., p_5) ∈ F_p^5`. The policy gadget
+  requires every active byte to be nonzero, every padding byte to be zero and
+  the active bytes to form a prefix, so `P ↦ P̂` is injective on provable
+  inputs. A longer `P` is packed as given, `⌈|P|/31⌉` elements, and has no
+  proof.
+- **Password hash.** `p(P) = Poseidon(... Poseidon(Poseidon(τ, |P|), p_1) ..., p_n)`:
+  `τ` the tag element of the ASCII `SID-PALLAS-PASSWORD-v2`, `|P|` the byte
+  length, `p_1..p_n` the elements above (`n = 5` when `|P| ≤ 128`). `n`
+  follows from `|P|`, and the first step's inputs are fixed in form, so two
+  inputs share `p` only through a Poseidon collision: trailing zero bytes
+  change `|P|`, and a shortened chain cannot reproduce the first step.
 - **Domain elements.** `domain_element(purpose, parts)` is `chain` over the
   packed bytes of `len(purpose) ‖ purpose ‖ len(part_1) ‖ part_1 ‖ ...`, every
   length a little-endian `u32`. The packing zero-pads the last field element
@@ -56,14 +64,14 @@ bounded try-and-increment over Poseidon and reaches only the even-root half of
 the points.
 
 - **OPRF.** RFC 9497 OPRF mode (`modeOPRF`) with identifier
-  `Pallas-Poseidon-SHA256`, so `contextString = "OPRFV1-" ‖ 0x00 ‖ "-" ‖
-  "Pallas-Poseidon-SHA256"`; hash SHA-256; `Finalize` as in RFC 9497 §3.3.1.
+  `Pallas-Poseidon-SHA256-v2`, so `contextString = "OPRFV1-" ‖ 0x00 ‖ "-" ‖
+  "Pallas-Poseidon-SHA256-v2"`; hash SHA-256; `Finalize` as in RFC 9497 §3.3.1.
 - **Group.** Pallas, generator `G`. Elements are 32-byte compressed encodings
   (`x` little-endian, the sign of `y` in the top bit); the identity is refused
   on decoding. Scalars are 32 bytes little-endian, canonical, nonzero.
-- **HashToGroup(P).** Ignores the DST. `P` is zero-padded to 128 bytes (a
-  longer `P` is taken as given and cannot be proved), packed as in
-  [Encodings](#encodings), and `u = chain(p_1, ..., p_5)`. The point is
+- **HashToGroup(P).** Ignores the DST. `u = p(P)`, the password hash of
+  [Encodings](#encodings); a `P` longer than 128 bytes hashes alike and cannot
+  be proved. The point is
   `(x, y)` with `x = u + o`, `o` the smallest offset in `[0, 2^8)` with
   `x³ + 5` a square, and `y` the even root (`sgn0(y) = 0`, RFC 9380 §4.1).
   All 2^8 offsets are tried, so the time does not depend on `P`. An empty
@@ -92,7 +100,9 @@ verifier refuses outside the SNARK when it decodes and compares `M`.
    keys: each policy is a different key, and no instance carries it.
 2. **Breach (gadget D).** `chain(P̂)` is a non-member of the Bloom filter
    compiled into the circuit (`m = 256`, `k = 3` in this version).
-3. **OPAQUE element (gadget C).** `u_P = chain(p_1, ..., p_5)`;
+3. **OPAQUE element (gadget C).** `u_P = p(P)`, whose length step absorbs
+   gadget A's own length count of the active prefix (copy-constrained, not an
+   instance) and the constant `τ`;
    `H_M ∈ E_p`, `H_M ≠ O`, `x(H_M) = u_P + o_M` with `0 ≤ o_M < 2^8`;
    `M = b·H_M`. `M` is the instance the verifier compares with the element of
    the client's OPAQUE registration request.
@@ -110,9 +120,10 @@ proves minimality in addition; gadget C does not need it (see "Canonical
 `H_M`" below).
 
 The gadgets share cells: the policy gadget's bytes are packed by constrained
-Horner steps and copy-constrained to the field elements gadget C hashes;
-gadget D hashes the same elements; gadget H takes gadget C's `u_P`. One `P`
-therefore satisfies all four parts.
+Horner steps and copy-constrained to the field elements gadget C hashes, and
+its length count to the length gadget C absorbs; gadget D hashes the same
+elements; gadget H takes gadget C's `u_P`. One `P` therefore satisfies all
+four parts.
 
 ## Binding to the operation
 

@@ -243,3 +243,16 @@ fn the_stored_entry_is_the_ksf_of_the_tag() {
     assert_ne!(s.as_slice(), t.to_repr().as_ref());
     assert_ne!(s, ksf(t, b"another-epoch-salt!!", TEST_KSF).unwrap());
 }
+
+/// A password and the same bytes with trailing NULs are different history
+/// inputs: otherwise one retained entry refuses both, and a tag reveals that
+/// the two are related.
+#[test]
+fn trailing_nul_is_another_history_input() {
+    let d = owner_domain("alice");
+    assert_ne!(history_input(d, b"a"), history_input(d, b"a\0"));
+    assert_ne!(
+        history_input(d, b"Str0ngP@ss"),
+        history_input(d, b"Str0ngP@ss\0\0")
+    );
+}

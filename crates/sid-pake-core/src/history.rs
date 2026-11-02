@@ -5,7 +5,7 @@
 //! the KSF over `t` and compares.
 //!
 //! ```text
-//! u = Poseidon(d, Poseidon(P))            d: history purpose, installation, owner
+//! u = Poseidon(d, p)                      d: history purpose, installation, owner; p = password_hash(P)
 //! H = canonical_point(u)                  minimal offset, even y
 //! B = r·H,  Z = k·B,  N = r⁻¹·Z = k·H
 //! t = Poseidon(c, u, x(N))                c: comparison domain (epoch, format)
@@ -19,7 +19,6 @@ use group::{Curve, Group};
 use pasta_curves::{arithmetic::CurveAffine, pallas};
 
 use crate::poseidon::{bytes_to_field_elements, poseidon_hash_chain};
-use crate::types::MAX_PASSWORD_LEN;
 
 /// Hash-to-curve tries `2^HTC_TRY_BITS` offsets from `u`.
 pub use crate::circuit::gadget_c::HTC_TRY_BITS;
@@ -36,22 +35,11 @@ pub fn domain_element(purpose: &[u8], parts: &[&[u8]]) -> pallas::Base {
     poseidon_hash_chain(&bytes_to_field_elements(&bytes))
 }
 
-/// The password packed as the circuit packs it: zero-padded to
-/// `MAX_PASSWORD_LEN`, 31 bytes per field element.
-///
-/// # Panics
-/// If `password` is longer than `MAX_PASSWORD_LEN`, which the prover refuses.
-pub fn password_elements(password: &[u8]) -> Vec<pallas::Base> {
-    let mut padded = [0u8; MAX_PASSWORD_LEN];
-    padded[..password.len()].copy_from_slice(password);
-    bytes_to_field_elements(&padded)
-}
-
-/// `u = Poseidon(d, Poseidon(P))`: the history input for one owner domain.
-/// The inner hash is the one the binder computes over the same padded
-/// password, so the circuit reuses it.
+/// `u = Poseidon(d, p)`: the history input for one owner domain, over the
+/// [password hash](crate::poseidon::password_hash) the binder computes, so
+/// the circuit reuses it.
 pub fn history_input(d: pallas::Base, password: &[u8]) -> pallas::Base {
-    let p = poseidon_hash_chain(&password_elements(password));
+    let p = crate::poseidon::password_hash(password);
     crate::poseidon::poseidon_hash_2(&[d, p])
 }
 

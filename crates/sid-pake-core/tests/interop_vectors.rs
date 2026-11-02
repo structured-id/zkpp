@@ -45,7 +45,7 @@ fn time_native_primitives() {
 #[test]
 fn dump_poseidon() {
     use halo2_gadgets::poseidon::primitives::{P128Pow5T3, Spec};
-    use sid_pake_core::poseidon::{legacy_history_digest, poseidon_hash_1, poseidon_hash_2};
+    use sid_pake_core::poseidon::{password_hash, poseidon_hash_1, poseidon_hash_2};
 
     let (rc, mds, _mds_inv) = <P128Pow5T3 as Spec<pallas::Base, 3, 2>>::constants();
 
@@ -73,13 +73,10 @@ fn dump_poseidon() {
     // Hash vectors.
     let h2 = poseidon_hash_2(&[pallas::Base::from(1u64), pallas::Base::from(2u64)]);
     let h1 = poseidon_hash_1(&[pallas::Base::from(7u64)]);
-    let hc = legacy_history_digest(b"Str0ngP@ssword!", &[42u8; 32]);
+    let hp = password_hash(b"Str0ngP@ssword!");
     s.push_str(&format!("HASH2_1_2={}\n", hex(h2.to_repr().as_ref())));
     s.push_str(&format!("HASH1_7={}\n", hex(h1.to_repr().as_ref())));
-    s.push_str(&format!(
-        "LEGACY_HISTORY_DIGEST={}\n",
-        hex(hc.to_repr().as_ref())
-    ));
+    s.push_str(&format!("PASSWORD_HASH={}\n", hex(hp.to_repr().as_ref())));
 
     // Native HashToCurve (gadget C): H_p = (x,y), u = Poseidon(pw), offset.
     let (hp, u, off) = sid_pake_core::circuit::gadget_c::hash_to_curve_outside(b"Str0ngP@ssword!");

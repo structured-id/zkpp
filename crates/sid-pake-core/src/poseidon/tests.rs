@@ -34,43 +34,28 @@ fn test_bytes_to_field_elements_long() {
     assert_eq!(fes.len(), 5); // ceil(128/31) = 5
 }
 
+/// The password hash is the length step followed by the padded elements, as
+/// the circuit computes it.
 #[test]
-fn test_legacy_digest_deterministic() {
+fn password_hash_is_the_length_step_then_the_elements() {
     let password = b"Str0ngP@ssword!";
-    let salt = [42u8; 32];
+    let mut acc = poseidon_hash_2(&[password_hash_tag(), pallas::Base::from(15u64)]);
+    for element in password_elements(password) {
+        acc = poseidon_hash_2(&[acc, element]);
+    }
+    assert_eq!(password_hash(password), acc);
+    assert_eq!(password_elements(password).len(), 5);
+    assert_eq!(password_elements(&[1u8; 129]).len(), 5);
+    assert_eq!(password_elements(&[1u8; 156]).len(), 6);
+}
+
+/// The tag is the ASCII domain name packed as one element.
+#[test]
+fn password_hash_tag_is_its_name() {
+    let mut repr = [0u8; 32];
+    repr[..22].copy_from_slice(b"SID-PALLAS-PASSWORD-v2");
     assert_eq!(
-        legacy_history_digest(password, &salt),
-        legacy_history_digest(password, &salt)
-    );
-}
-
-#[test]
-fn test_legacy_digest_different_passwords() {
-    let salt = [42u8; 32];
-    assert_ne!(
-        legacy_history_digest(b"password1", &salt),
-        legacy_history_digest(b"password2", &salt)
-    );
-}
-
-#[test]
-fn test_legacy_digest_different_salts() {
-    let password = b"same_password";
-    assert_ne!(
-        legacy_history_digest(password, &[1u8; 32]),
-        legacy_history_digest(password, &[2u8; 32])
-    );
-}
-
-/// The legacy digest is over the zero-padded buffer, the form the stored
-/// legacy entries were computed from; migration must reproduce it exactly.
-#[test]
-fn test_legacy_digest_is_over_the_padded_password() {
-    let salt = [42u8; 32];
-    let mut padded = [0u8; crate::types::MAX_PASSWORD_LEN];
-    padded[..15].copy_from_slice(b"Str0ngP@ssword!");
-    assert_eq!(
-        legacy_history_digest(b"Str0ngP@ssword!", &salt),
-        legacy_history_digest(&padded, &salt)
+        password_hash_tag(),
+        <pallas::Base as ff::PrimeField>::from_repr(repr).unwrap()
     );
 }

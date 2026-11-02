@@ -70,20 +70,40 @@ pub fn poseidon_hash_chain(elements: &[pallas::Base]) -> pallas::Base {
     acc
 }
 
-/// The legacy history digest `LegacyHash(P, salt) = Poseidon(P || salt)` over
-/// the zero-padded password. Only the input of a legacy comparison domain
-/// during migration; never a new
-/// history entry, since the digest with its salt tests guesses directly.
+/// The domain tag of the password hash: the ASCII bytes of
+/// `SID-PALLAS-PASSWORD-v2` packed as one field element.
+pub fn password_hash_tag() -> pallas::Base {
+    bytes_to_field_elements(b"SID-PALLAS-PASSWORD-v2")[0]
+}
+
+/// The password as the hash absorbs it: zero-padded to `MAX_PASSWORD_LEN`
+/// when it fits, so the circuit's fixed buffer packs alike, and as given
+/// otherwise.
+pub fn password_elements(password: &[u8]) -> Vec<pallas::Base> {
+    use crate::types::MAX_PASSWORD_LEN;
+    if password.len() <= MAX_PASSWORD_LEN {
+        let mut padded = [0u8; MAX_PASSWORD_LEN];
+        padded[..password.len()].copy_from_slice(password);
+        bytes_to_field_elements(&padded)
+    } else {
+        bytes_to_field_elements(password)
+    }
+}
+
+/// The password hash `p`: `Poseidon(TAG, L)` with `L` the password's byte
+/// length, then each element of [`password_elements`] absorbed in turn. The
+/// number of elements follows from `L`, so two passwords hash alike only by
+/// a Poseidon collision: neither trailing zero bytes nor a shortened chain
+/// make another password (RFC 9497 §4.6).
 ///
 /// # Panics
-/// If `password` is longer than `MAX_PASSWORD_LEN`, which the prover refuses.
-pub fn legacy_history_digest(password: &[u8], salt: &[u8; 32]) -> pallas::Base {
-    let mut padded = [0u8; crate::types::MAX_PASSWORD_LEN];
-    padded[..password.len()].copy_from_slice(password);
-    let mut password_fes = bytes_to_field_elements(&padded);
-    let salt_fe = bytes_to_field_elements(salt);
-    password_fes.extend_from_slice(&salt_fe);
-    poseidon_hash_chain(&password_fes)
+/// On a length beyond `u64`, which no input reaches.
+pub fn password_hash(password: &[u8]) -> pallas::Base {
+    let length = u64::try_from(password.len()).expect("a length fits u64");
+    password_elements(password).into_iter().fold(
+        poseidon_hash_2(&[password_hash_tag(), pallas::Base::from(length)]),
+        |acc, element| poseidon_hash_2(&[acc, element]),
+    )
 }
 
 #[cfg(test)]

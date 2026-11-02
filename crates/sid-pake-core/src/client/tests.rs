@@ -32,14 +32,12 @@ fn answer(k: pallas::Scalar, blinded: pallas::Affine, operation: &[u8]) -> Evalu
 }
 
 // The request a start sends is the OPRF element of exactly the blind it
-// reports, over the password padded as the circuit hashes it, and the circuit
-// can hold that blind: a proof made with it binds this request.
+// reports, over the password as the circuit hashes it, and the circuit can
+// hold that blind: a proof made with it binds this request.
 #[test]
 fn a_start_reports_the_blind_of_its_own_request() {
     let start = start_registration(&mut rand::rng(), PASSWORD).unwrap();
-    let mut padded = PASSWORD.to_vec();
-    padded.resize(MAX_PASSWORD_LEN, 0);
-    let (h, _, _) = hash_to_curve_outside(&padded);
+    let (h, _, _) = hash_to_curve_outside(PASSWORD);
     let element = (pallas::Point::from(h) * start.blind()).to_affine();
     assert_eq!(
         start.request.serialize().as_slice(),

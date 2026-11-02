@@ -9,14 +9,11 @@ use crate::circuit::gadget_c::hash_to_curve_outside;
 use crate::circuit::gadget_h::HistoryTagWitness;
 use crate::history::{blind_request, domain_element, evaluate, history_input, random_blind};
 use crate::prover::HistoryEvaluation;
-use crate::types::MAX_PASSWORD_LEN;
 
 /// The OPRF element an OPAQUE client sends for `password` under `blind`:
-/// `blind·H_p` of the padded password, as the Pallas OPAQUE group hashes it.
+/// `blind·H_p` of the password, as the Pallas OPAQUE group hashes it.
 pub(crate) fn oprf_element(password: &[u8], blind: pallas::Scalar) -> pallas::Affine {
-    let mut padded = [0u8; MAX_PASSWORD_LEN];
-    padded[..password.len()].copy_from_slice(password);
-    let (h_p, _, _) = hash_to_curve_outside(&padded);
+    let (h_p, _, _) = hash_to_curve_outside(password);
     (pallas::Point::from(h_p) * blind).to_affine()
 }
 

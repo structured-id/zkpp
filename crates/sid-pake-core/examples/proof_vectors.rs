@@ -80,7 +80,7 @@ fn main() {
     let c = domain_element(b"SID-HISTORY-TAG-v1", &[b"epoch-1", b"format-1"]);
     let r = pallas::Base::random(&mut seed);
     let key = pallas::Scalar::random(&mut seed);
-    let u = history_input(d, &password);
+    let u = history_input(d, pw);
     let b = blind_request(u, r);
     let z = evaluate(key, b).expect("nonidentity");
     let circuit = ZkppCircuit {

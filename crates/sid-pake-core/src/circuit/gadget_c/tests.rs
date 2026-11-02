@@ -103,12 +103,23 @@ fn the_opaque_mapping_takes_the_even_root() {
     }
 }
 
+/// The password a test buffer holds: its bytes up to the zero padding.
+fn logical(buffer: &[u8; MAX_PASSWORD_LEN]) -> &[u8] {
+    let end = buffer
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(MAX_PASSWORD_LEN);
+    &buffer[..end]
+}
+
 /// The binder over `password`, with the hash-to-curve witnesses (`h_p`,
-/// `offset`) either honest or chosen by a malicious prover.
+/// `offset`) and the length count either honest or chosen by a malicious
+/// prover.
 #[derive(Clone)]
 struct BinderTestCircuit {
     password: [u8; MAX_PASSWORD_LEN],
     witness: Option<(pallas::Affine, pallas::Base)>,
+    length: Option<u64>,
 }
 
 impl BinderTestCircuit {
@@ -116,6 +127,7 @@ impl BinderTestCircuit {
         Self {
             password,
             witness: None,
+            length: None,
         }
     }
 }
@@ -137,19 +149,33 @@ impl Circuit<pallas::Base> for BinderTestCircuit {
         config: Self::Config,
         mut layouter: impl Layouter<pallas::Base>,
     ) -> Result<(), Error> {
+        let input = config.input_col;
         let chip = OpaqueBinderChip::construct(config);
 
         let password_values: [Value<pallas::Base>; MAX_PASSWORD_LEN] =
             core::array::from_fn(|i| Value::known(pallas::Base::from(self.password[i] as u64)));
 
         let (h_p, offset) = self.witness.unwrap_or_else(|| {
-            let (h_p, _u, offset) = hash_to_curve_outside(&self.password);
+            let (h_p, _u, offset) = hash_to_curve_outside(logical(&self.password));
             (h_p, offset)
         });
+        let length = self.length.unwrap_or(logical(&self.password).len() as u64);
+        let length = layouter.assign_region(
+            || "length",
+            |mut region| {
+                region.assign_advice(
+                    || "length",
+                    input,
+                    0,
+                    || Value::known(pallas::Base::from(length)),
+                )
+            },
+        )?;
 
         let _output = chip.synthesize(
             &mut layouter,
             &password_values,
+            &length,
             Value::known(pallas::Base::from(7u64)),
             Value::known(h_p),
             Value::known(offset),
@@ -207,11 +233,12 @@ fn test_opaque_binder_circuit() {
 #[test]
 fn a_point_hashed_from_other_bytes_is_refused() {
     let strong = make_password("Str0ngP@ssword!");
-    let (weak_point, _, _) = hash_to_curve_outside(&make_password("abc"));
-    let (_, _, strong_offset) = hash_to_curve_outside(&strong);
+    let (weak_point, _, _) = hash_to_curve_outside(b"abc");
+    let (_, _, strong_offset) = hash_to_curve_outside(logical(&strong));
     let circuit = BinderTestCircuit {
         password: strong,
         witness: Some((weak_point, strong_offset)),
+        length: None,
     };
     let failures = format!(
         "{:?}",
@@ -229,12 +256,13 @@ fn a_point_hashed_from_other_bytes_is_refused() {
 #[test]
 fn an_offset_steering_to_another_point_is_refused() {
     let strong = make_password("Str0ngP@ssword!");
-    let (weak_point, _, _) = hash_to_curve_outside(&make_password("abc"));
-    let (_, strong_u, _) = hash_to_curve_outside(&strong);
+    let (weak_point, _, _) = hash_to_curve_outside(b"abc");
+    let (_, strong_u, _) = hash_to_curve_outside(logical(&strong));
     let weak_x = *weak_point.coordinates().unwrap().x();
     let circuit = BinderTestCircuit {
         password: strong,
         witness: Some((weak_point, weak_x - strong_u)),
+        length: None,
     };
     let failures = format!(
         "{:?}",
@@ -243,5 +271,27 @@ fn an_offset_steering_to_another_point_is_refused() {
     assert!(
         failures.contains("Lookup") && !failures.contains("htc_bind"),
         "an offset outside the try range must fail only its range check: {failures}"
+    );
+}
+
+/// The hash absorbs the length count: hashing the same bytes under another
+/// length is another point, so the honest point of the password does not
+/// bind. (In the combined circuit the count is Gadget A's, of the active
+/// prefix.)
+#[test]
+fn a_length_other_than_the_passwords_is_refused() {
+    let password = make_password("Str0ngP@ssword!");
+    let mut circuit = BinderTestCircuit::honest(password);
+    MockProver::run(K, &circuit, vec![])
+        .unwrap()
+        .assert_satisfied();
+    circuit.length = Some(logical(&password).len() as u64 + 1);
+    let failures = format!(
+        "{:?}",
+        MockProver::run(K, &circuit, vec![]).unwrap().verify()
+    );
+    assert!(
+        failures.contains("htc_bind"),
+        "a hash under another length must not bind the password's point: {failures}"
     );
 }
