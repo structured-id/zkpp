@@ -106,21 +106,5 @@ pub fn password_hash(password: &[u8]) -> pallas::Base {
     )
 }
 
-/// The legacy history digest `LegacyHash(P, salt) = Poseidon(P || salt)` over
-/// the zero-padded password. Only the input of a legacy comparison domain
-/// during migration; never a new
-/// history entry, since the digest with its salt tests guesses directly.
-///
-/// # Panics
-/// If `password` is longer than `MAX_PASSWORD_LEN`, which the prover refuses.
-pub fn legacy_history_digest(password: &[u8], salt: &[u8; 32]) -> pallas::Base {
-    let mut padded = [0u8; crate::types::MAX_PASSWORD_LEN];
-    padded[..password.len()].copy_from_slice(password);
-    let mut password_fes = bytes_to_field_elements(&padded);
-    let salt_fe = bytes_to_field_elements(salt);
-    password_fes.extend_from_slice(&salt_fe);
-    poseidon_hash_chain(&password_fes)
-}
-
 #[cfg(test)]
 mod tests;
