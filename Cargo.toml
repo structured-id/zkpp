@@ -12,7 +12,7 @@ authors = ["StructuredID Contributors"]
 [workspace.dependencies]
 # The proof system as published on crates.io: this workspace builds and
 # verifies on it with no fork or patch.
-halo2_proofs = { version = "=0.4.0", features = ["batch"] }
+halo2_proofs = { version = "=0.4.1", features = ["batch"] }
 halo2_gadgets = "0.6"
 pasta_curves = "0.6"
 ff = "0.14"
@@ -20,7 +20,7 @@ group = "0.14"
 subtle = "2"
 
 # OPAQUE on Pallas and the history VOPRF, on the current RustCrypto releases.
-sid-opaque-ke = { version = "4.1", features = ["argon2"] }
+sid-opaque-ke = { version = "4.2", features = ["argon2"] }
 argon2 = "0.6"
 # `danger` exposes `derive_key`, which the key-exchange group needs to derive
 # its key pair the way the built-in curves do.
