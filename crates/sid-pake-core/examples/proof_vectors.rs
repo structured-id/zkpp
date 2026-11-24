@@ -11,7 +11,7 @@
 use ff::{Field, PrimeField};
 use group::GroupEncoding;
 use halo2_proofs::{
-    plonk::{SingleVerifier, create_proof, verify_proof},
+    plonk::{SingleVerifier, verify_proof},
     transcript::{Blake2bRead, Blake2bWrite, Challenge255, Transcript},
 };
 use pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
@@ -111,15 +111,9 @@ fn main() {
     transcript
         .common_scalar(context_scalar)
         .expect("absorb context");
-    create_proof(
-        &params,
-        &pk,
-        &[circuit],
-        &[&[&instances]],
-        &mut rng,
-        &mut transcript,
-    )
-    .expect("prove");
+    circuit
+        .create_proof(&params, &pk, &instances, &mut rng, &mut transcript)
+        .expect("prove");
     let proof = transcript.finalize();
 
     let mut read = Blake2bRead::<_, vesta::Affine, Challenge255<vesta::Affine>>::init(&proof[..]);

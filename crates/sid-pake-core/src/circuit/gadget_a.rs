@@ -22,6 +22,13 @@
 //!   active*is_upper*byte + (1-active*is_upper)*65 ∈ T_UPPER (likewise lower, digit, symbol)
 //!   byte ∈ T_RANGE, active*(byte-1) ∈ T_RANGE (an active byte is non-zero)
 //!   q_cmp*(count - policy_min) ∈ T_RANGE (each count meets its minimum)
+//!
+//! A policy counted in code points has, in addition, the UTF-8 decoder's
+//! state before each byte: (state[i], byte[i], state[i+1]) ∈ T_UTF8, the
+//! state zero on row 0 and on the row after the last byte. The password is
+//! then well-formed UTF-8 (RFC 3629 section 4), and its lead bytes, which
+//! the fourth class counts, are its code points. A policy counted in bytes
+//! has none of this and keeps the released constraint system.
 
 use ff::PrimeField;
 use halo2_proofs::{
@@ -31,7 +38,7 @@ use halo2_proofs::{
 };
 use pasta_curves::pallas;
 
-use crate::types::{MAX_PASSWORD_LEN, PolicyParams};
+use crate::types::{LengthUnit, MAX_PASSWORD_LEN, PolicyParams, starts_code_point};
 
 /// Values a comparison difference may take: counts and minimums are at most
 /// `MAX_PASSWORD_LEN`, so a met minimum leaves a difference in this range and
@@ -63,6 +70,69 @@ pub struct PolicyEngineConfig {
     pub q_init: Selector,
     pub q_acc: Selector,
     pub q_cmp: Selector,
+    /// The UTF-8 well-formedness check, in the constraint system of a policy
+    /// counted in code points only.
+    pub utf8: Option<Utf8Config>,
+}
+
+/// The columns of the UTF-8 well-formedness check: the decoder's state
+/// before each byte and its transition table.
+#[derive(Debug, Clone)]
+pub struct Utf8Config {
+    pub state: Column<Advice>,
+    pub table_state: TableColumn,
+    pub table_byte: TableColumn,
+    pub table_next: TableColumn,
+    /// On every byte row: the transition lookup.
+    pub q_step: Selector,
+    /// On the row after the last byte: the final state.
+    pub q_end: Selector,
+}
+
+/// The decoder's state between two bytes of a UTF-8 string (RFC 3629
+/// section 4, `UTF8-octets`): at a code point boundary, or inside a sequence
+/// with the bytes its tail may still take.
+mod utf8_state {
+    /// At a code point boundary: the only state a string starts and ends in.
+    pub(super) const BOUNDARY: u8 = 0;
+    /// One tail byte `80-BF` left.
+    pub(super) const TAIL_1: u8 = 1;
+    /// Two tail bytes `80-BF` left.
+    pub(super) const TAIL_2: u8 = 2;
+    /// After `E0`: `A0-BF`, then one tail byte (no overlong form).
+    pub(super) const AFTER_E0: u8 = 3;
+    /// After `ED`: `80-9F`, then one tail byte (no surrogate).
+    pub(super) const AFTER_ED: u8 = 4;
+    /// Three tail bytes `80-BF` left.
+    pub(super) const TAIL_3: u8 = 5;
+    /// After `F0`: `90-BF`, then two tail bytes (no overlong form).
+    pub(super) const AFTER_F0: u8 = 6;
+    /// After `F4`: `80-8F`, then two tail bytes (nothing above U+10FFFF).
+    pub(super) const AFTER_F4: u8 = 7;
+    /// Every state.
+    pub(super) const ALL: core::ops::RangeInclusive<u8> = BOUNDARY..=AFTER_F4;
+}
+
+/// The state after `byte` in `state`, by the `UTF8-octets` grammar of
+/// RFC 3629 section 4; none where the grammar allows no such byte. NUL is
+/// the padding after the password: it keeps the boundary and is no byte of a
+/// password.
+pub(crate) const fn utf8_step(state: u8, byte: u8) -> Option<u8> {
+    use utf8_state::*;
+    Some(match (state, byte) {
+        (BOUNDARY, 0x00..=0x7F) => BOUNDARY,
+        (BOUNDARY, 0xC2..=0xDF) => TAIL_1,
+        (BOUNDARY, 0xE0) => AFTER_E0,
+        (BOUNDARY, 0xE1..=0xEC | 0xEE..=0xEF) => TAIL_2,
+        (BOUNDARY, 0xED) => AFTER_ED,
+        (BOUNDARY, 0xF0) => AFTER_F0,
+        (BOUNDARY, 0xF1..=0xF3) => TAIL_3,
+        (BOUNDARY, 0xF4) => AFTER_F4,
+        (TAIL_1, 0x80..=0xBF) => BOUNDARY,
+        (TAIL_2, 0x80..=0xBF) | (AFTER_E0, 0xA0..=0xBF) | (AFTER_ED, 0x80..=0x9F) => TAIL_1,
+        (TAIL_3, 0x80..=0xBF) | (AFTER_F0, 0x90..=0xBF) | (AFTER_F4, 0x80..=0x8F) => TAIL_2,
+        _ => return None,
+    })
 }
 
 /// Chip implementing the Policy Engine gadget.
@@ -78,7 +148,14 @@ impl PolicyEngineChip {
         Self { config, policy }
     }
 
-    pub fn configure(meta: &mut ConstraintSystem<pallas::Base>) -> PolicyEngineConfig {
+    /// The policy engine's constraints for policies counted in `unit`. The
+    /// unit is part of the constraint system, not only of the tables: a
+    /// policy counted in code points also proves the password well-formed
+    /// UTF-8, and one counted in bytes keeps the released constraint system.
+    pub fn configure(
+        meta: &mut ConstraintSystem<pallas::Base>,
+        unit: LengthUnit,
+    ) -> PolicyEngineConfig {
         let byte_col = meta.advice_column();
         let active_col = meta.advice_column();
         let is_upper = meta.advice_column();
@@ -253,6 +330,56 @@ impl PolicyEngineChip {
             vec![(q * (count - min), table_range)]
         });
 
+        // Allocated after everything a byte policy has, so that policy's
+        // constraint system is the released one.
+        let utf8 = (unit == LengthUnit::CodePoints).then(|| {
+            let state = meta.advice_column();
+            let table_state = meta.lookup_table_column();
+            let table_byte = meta.lookup_table_column();
+            let table_next = meta.lookup_table_column();
+            let q_end = meta.selector();
+
+            // The string starts at a code point boundary and, after the last
+            // byte row, is at one again: no sequence is cut short.
+            meta.create_gate("utf8_boundaries", |meta| {
+                let state = meta.query_advice(state, Rotation::cur());
+                vec![
+                    meta.query_selector(q_init) * state.clone(),
+                    meta.query_selector(q_end) * state,
+                ]
+            });
+
+            // Each byte is one the grammar allows in the state before it and
+            // leads to the state before the next. Padding keeps the boundary
+            // and is allowed nowhere else, so a password that ends inside a
+            // sequence has no witness. Off the byte rows the selector makes
+            // the all-zero row, which is the padding entry.
+            let q_step = meta.complex_selector();
+            meta.lookup(|meta| {
+                let q = meta.query_selector(q_step);
+                vec![
+                    (
+                        q.clone() * meta.query_advice(state, Rotation::cur()),
+                        table_state,
+                    ),
+                    (
+                        q.clone() * meta.query_advice(byte_col, Rotation::cur()),
+                        table_byte,
+                    ),
+                    (q * meta.query_advice(state, Rotation::next()), table_next),
+                ]
+            });
+
+            Utf8Config {
+                state,
+                table_state,
+                table_byte,
+                table_next,
+                q_step,
+                q_end,
+            }
+        });
+
         PolicyEngineConfig {
             byte_col,
             active_col,
@@ -276,16 +403,19 @@ impl PolicyEngineChip {
             q_init,
             q_acc,
             q_cmp,
+            utf8,
         }
     }
 
     /// Load the ASCII class tables and the byte range table.
     pub fn load_tables(&self, layouter: &mut impl Layouter<pallas::Base>) -> Result<(), Error> {
         let config = &self.config;
-        let symbols: Vec<u64> = (33u64..=47)
-            .chain(58..=64)
-            .chain(91..=96)
-            .chain(123..=126)
+        // The fourth class is the policy's: ASCII symbols, or the bytes that
+        // start a code point when the policy counts those. The table is part
+        // of the keys, like the minimums.
+        let symbols: Vec<u64> = (0u8..=255)
+            .filter(|b| Self::fourth_class(self.policy.length_unit, *b))
+            .map(u64::from)
             .collect();
         let tables: [(&str, TableColumn, Vec<u64>); 5] = [
             ("T_UPPER", config.table_upper, (65u64..=90).collect()),
@@ -310,19 +440,53 @@ impl PolicyEngineChip {
                 },
             )?;
         }
+        if let Some(utf8) = &config.utf8 {
+            // The padding entry first: it is the all-zero row, which the
+            // table's unused rows repeat.
+            let transitions = utf8_state::ALL.flat_map(|state| {
+                (0u8..=255).filter_map(move |byte| Some((state, byte, utf8_step(state, byte)?)))
+            });
+            layouter.assign_table(
+                || "T_UTF8",
+                |mut table| {
+                    for (i, (state, byte, next)) in transitions.clone().enumerate() {
+                        for (column, value) in [
+                            (utf8.table_state, state),
+                            (utf8.table_byte, byte),
+                            (utf8.table_next, next),
+                        ] {
+                            table.assign_cell(
+                                || format!("T_UTF8_{state}_{byte}"),
+                                column,
+                                i,
+                                || Value::known(pallas::Base::from(u64::from(value))),
+                            )?;
+                        }
+                    }
+                    Ok(())
+                },
+            )?;
+        }
         Ok(())
     }
 
-    /// Classify a single byte into character classes.
-    fn classify(b: u64) -> (bool, bool, bool, bool) {
+    /// Whether `byte` counts in the fourth class under `unit`.
+    fn fourth_class(unit: LengthUnit, byte: u8) -> bool {
+        match unit {
+            LengthUnit::Bytes => {
+                matches!(byte, 33..=47 | 58..=64 | 91..=96 | 123..=126)
+            }
+            LengthUnit::CodePoints => starts_code_point(byte),
+        }
+    }
+
+    /// Classify a single byte into the four counted classes under `unit`.
+    fn classify(unit: LengthUnit, b: u64) -> (bool, bool, bool, bool) {
         let is_upper = (65..=90).contains(&b);
         let is_lower = (97..=122).contains(&b);
         let is_digit = (48..=57).contains(&b);
-        let is_symbol = (33..=47).contains(&b)
-            || (58..=64).contains(&b)
-            || (91..=96).contains(&b)
-            || (123..=126).contains(&b);
-        (is_upper, is_lower, is_digit, is_symbol)
+        let fourth = u8::try_from(b).is_ok_and(|byte| Self::fourth_class(unit, byte));
+        (is_upper, is_lower, is_digit, fourth)
     }
 
     /// Synthesize the policy engine over the padded password and its active
@@ -382,7 +546,7 @@ impl PolicyEngineChip {
                             return [pallas::Base::zero(); 4];
                         }
                         let b_u64 = u64::from_le_bytes(b.to_repr()[..8].try_into().unwrap());
-                        let (u, l, d, s) = Self::classify(b_u64);
+                        let (u, l, d, s) = Self::classify(policy.length_unit, b_u64);
                         [to_fe(u), to_fe(l), to_fe(d), to_fe(s)]
                     });
                     let flag_cols = [
@@ -432,15 +596,38 @@ impl PolicyEngineChip {
                     }
                 }
 
+                // The decoder's state before each byte, and after the last.
+                if let Some(utf8) = &config.utf8 {
+                    let mut state = Value::known(utf8_state::BOUNDARY);
+                    for (i, byte) in password.iter().enumerate() {
+                        utf8.q_step.enable(&mut region, i)?;
+                        region.assign_advice(
+                            || format!("utf8_state_{i}"),
+                            utf8.state,
+                            i,
+                            || state.map(|s| pallas::Base::from(u64::from(s))),
+                        )?;
+                        // A byte the grammar refuses has no next state: any
+                        // value fails the lookup, and the proof is refused.
+                        state = state.zip(*byte).map(|(s, b)| {
+                            u8::try_from(u64::from_le_bytes(b.to_repr()[..8].try_into().unwrap()))
+                                .ok()
+                                .and_then(|b| utf8_step(s, b))
+                                .unwrap_or(utf8_state::BOUNDARY)
+                        });
+                    }
+                    utf8.q_end.enable(&mut region, MAX_PASSWORD_LEN)?;
+                    region.assign_advice(
+                        || "utf8_state_end",
+                        utf8.state,
+                        MAX_PASSWORD_LEN,
+                        || state.map(|s| pallas::Base::from(u64::from(s))),
+                    )?;
+                }
+
                 // Comparison rows: each final count against its fixed minimum,
-                // in the order [length, upper, lower, digit, symbol].
-                let minimums = [
-                    policy.min_length,
-                    policy.min_upper,
-                    policy.min_lower,
-                    policy.min_digit,
-                    policy.min_symbol,
-                ];
+                // in the order [length, upper, lower, digit, fourth class].
+                let minimums = policy.circuit_minimums();
                 let length = last_cells[0].clone();
                 for (k, (count, min)) in last_cells.iter().zip(minimums).enumerate() {
                     let row = MAX_PASSWORD_LEN + k;

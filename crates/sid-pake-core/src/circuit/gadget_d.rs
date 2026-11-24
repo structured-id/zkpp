@@ -347,7 +347,7 @@ impl BreachBloomChip {
         layouter.assign_table(
             || "bloom_table",
             |mut table| {
-                for i in 0..m {
+                for (i, bit) in filter.bits[..m].iter().enumerate() {
                     table.assign_cell(
                         || "t_idx",
                         config.table_idx,
@@ -358,7 +358,7 @@ impl BreachBloomChip {
                         || "t_bit",
                         config.table_bit,
                         i,
-                        || Value::known(pallas::Base::from(filter.bits[i] as u64)),
+                        || Value::known(pallas::Base::from(*bit as u64)),
                     )?;
                 }
                 // sentinel (m, 0)

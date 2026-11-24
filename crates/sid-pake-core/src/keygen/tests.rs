@@ -2,7 +2,7 @@ use super::*;
 use crate::circuit::ZKPP_K;
 use crate::prover::ZkppProver;
 use crate::test_support::{history_evaluation, oprf_element};
-use crate::types::{CE_DEFAULT_POLICY, PolicyParams};
+use crate::types::{CE_DEFAULT_POLICY, LengthUnit, PolicyParams};
 use crate::verifier::ZkppVerifier;
 use ff::Field;
 use pasta_curves::pallas;
@@ -14,6 +14,7 @@ const STRICT: PolicyParams = PolicyParams {
     min_lower: 2,
     min_digit: 2,
     min_symbol: 1,
+    length_unit: LengthUnit::Bytes,
 };
 
 const CE: CircuitShape = CircuitShape::single_domain(CE_DEFAULT_POLICY);
@@ -28,7 +29,6 @@ fn keys(n: usize) -> Vec<pallas::Scalar> {
 /// out the fixed minimums and the domain count from it.
 #[test]
 fn without_witnesses_keeps_the_shape() {
-    use halo2_proofs::plonk::Circuit;
     let shape = CircuitShape {
         policy: STRICT,
         history_domains: 2,
@@ -120,6 +120,175 @@ fn a_proof_for_fewer_domains_is_refused() {
     ));
 }
 
+/// A policy the circuit cannot hold gets no key, with the reason: a minimum
+/// above the longest password, and a symbol minimum beside a length counted
+/// in code points (one class count carries either). At the limit a key is
+/// built.
+/// Bug prevented: a key built for such a policy silently enforcing something
+/// else, here a code-point policy whose symbol minimum is never checked.
+#[test]
+fn a_policy_the_circuit_cannot_hold_gets_no_key() {
+    use crate::types::{MAX_PASSWORD_LEN, PolicyError};
+    let params = generate_params(ZKPP_K);
+    let longest = MAX_PASSWORD_LEN as u32;
+    let with_symbols = PolicyParams {
+        min_symbol: 1,
+        ..PolicyParams::code_points(12)
+    };
+    for (policy, reason) in [
+        (
+            PolicyParams::code_points(longest + 1),
+            PolicyError::MinimumTooLarge,
+        ),
+        (
+            PolicyParams {
+                min_digit: longest + 1,
+                ..CE_DEFAULT_POLICY
+            },
+            PolicyError::MinimumTooLarge,
+        ),
+        (with_symbols, PolicyError::SymbolsWithCodePoints),
+    ] {
+        assert_eq!(policy.check(), Err(reason));
+        let shape = CircuitShape::single_domain(policy);
+        assert!(matches!(
+            generate_vk(&params, shape),
+            Err(KeygenError::Policy(r)) if r == reason
+        ));
+        assert!(matches!(
+            generate_pk(&params, shape),
+            Err(KeygenError::Policy(r)) if r == reason
+        ));
+    }
+    let at_the_limit = CircuitShape::single_domain(PolicyParams::code_points(longest));
+    assert!(generate_vk(&params, at_the_limit).is_ok());
+}
+
+/// SHA-256 of the pinned representation of `shape`'s verifying key over
+/// `params`, in hex.
+fn pinned_digest(params: &Params<vesta::Affine>, shape: CircuitShape) -> String {
+    use sha2::{Digest, Sha256};
+    let vk = generate_vk(params, shape).unwrap();
+    Sha256::digest(format!("{:?}", vk.pinned()))
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Version 1 is released: clients hold its keys and stored credentials were
+/// proved under them, so its verifying key is the released one for both
+/// domain counts whatever policies are added beside it.
+/// Bug prevented: a new policy's column, table or gate changing the layout
+/// of version 1, after which no released client's proof verifies.
+#[test]
+fn the_released_version_keeps_its_verifying_key() {
+    let params = generate_params(ZKPP_K);
+    for (domains, released) in [
+        (
+            1,
+            "e12053485aa071b0ddc42957807bdde3f88ef51f350738dc301b1e78b1222e13",
+        ),
+        (
+            2,
+            "eeb7195d00646e6d9f004718a0240dc6eeb4f077d73be7d40ba17fde881ecdbf",
+        ),
+    ] {
+        let shape = CircuitShape {
+            policy: CE_DEFAULT_POLICY,
+            history_domains: domains,
+        };
+        assert_eq!(pinned_digest(&params, shape), released, "{domains} domains");
+    }
+}
+
+/// Every built-in version has its own keys, and a proof made for one is no
+/// proof for another, even of a password that meets them all: the version a
+/// credential was admitted under cannot be passed off as a different one.
+/// Bug prevented: two versions sharing a key, so a proof for the weakest
+/// policy is accepted where the issuer selected a stronger one.
+#[test]
+fn a_proof_for_one_version_is_refused_under_another() {
+    use crate::policy::{BUILT_IN_VERSIONS, get_policy};
+    let params = generate_params(ZKPP_K);
+    let shapes: Vec<_> = BUILT_IN_VERSIONS
+        .iter()
+        .map(|version| CircuitShape::single_domain(get_policy(*version).unwrap()))
+        .collect();
+    let verifiers: Vec<_> = shapes
+        .iter()
+        .map(|shape| {
+            ZkppVerifier::new(
+                params.clone(),
+                generate_vk(&params, *shape).unwrap(),
+                *shape,
+            )
+        })
+        .collect();
+    for (a, one) in verifiers.iter().enumerate() {
+        for other in &verifiers[a + 1..] {
+            assert_ne!(one.artifact(), other.artifact());
+        }
+    }
+
+    // Long enough and with every class: it meets all four policies.
+    let password = b"Str0ngP@ssword!";
+    let ks = keys(1);
+    for (made_for, shape) in shapes.iter().enumerate() {
+        let prover = ZkppProver::new(
+            params.clone(),
+            generate_pk(&params, *shape).unwrap(),
+            *shape,
+        );
+        let blind = pallas::Scalar::random(&mut rand::rng());
+        let bound = prover
+            .prove(password, blind, b"ctx", &history_evaluation(password, &ks))
+            .unwrap();
+        let m = oprf_element(password, blind);
+        for (under, verifier) in verifiers.iter().enumerate() {
+            assert_eq!(
+                verifier.verify(&bound, b"ctx", m).is_ok(),
+                under == made_for,
+                "made for version {}, verified under version {}",
+                BUILT_IN_VERSIONS[made_for].0,
+                BUILT_IN_VERSIONS[under].0
+            );
+        }
+    }
+}
+
+/// The whole proof under a policy counted in code points: a password of
+/// multibyte characters at the minimum is proved and verified, one code
+/// point short has no proof, and bytes that are no UTF-8 have none either.
+/// Bug prevented: the combined circuit laying a code-point policy out under
+/// the byte policy's constraint system, where nothing checks the encoding.
+#[test]
+fn a_code_point_policy_proves_well_formed_text_only() {
+    use crate::types::STANDARD_POLICY;
+    let shape = CircuitShape::single_domain(STANDARD_POLICY);
+    let params = generate_params(ZKPP_K);
+    let pk = generate_pk(&params, shape).unwrap();
+    let verifier = ZkppVerifier::new(params.clone(), pk.get_vk().clone(), shape);
+    let prover = ZkppProver::new(params, pk, shape);
+    let ks = keys(1);
+    let prove = |password: &[u8]| {
+        let blind = pallas::Scalar::random(&mut rand::rng());
+        prover
+            .prove(password, blind, b"ctx", &history_evaluation(password, &ks))
+            .map(|bound| (bound, oprf_element(password, blind)))
+    };
+
+    let password = "пароль 日本語!!";
+    assert_eq!(password.chars().count(), 12);
+    let (bound, m) = prove(password.as_bytes()).unwrap();
+    verifier.verify(&bound, b"ctx", m).expect("it verifies");
+
+    assert!(prove("пароль 日本語!".as_bytes()).is_err());
+    assert!(prove(&[0xC2; 24]).is_err());
+    let mut cut = password.as_bytes().to_vec();
+    cut.extend_from_slice(&[0xE2, 0x82]);
+    assert!(prove(&cut).is_err());
+}
+
 #[test]
 fn test_keygen() {
     let params = generate_params(ZKPP_K);
@@ -152,11 +321,11 @@ fn test_keygen_split_timing() {
 
     let circuit = ZkppCircuit::for_shape(CE);
     let t1 = Instant::now();
-    let vk = halo2_proofs::plonk::keygen_vk(&params, &circuit).unwrap();
+    let vk = circuit.clone().keygen_vk(&params).unwrap();
     let vk_ms = t1.elapsed().as_millis();
 
     let t2 = Instant::now();
-    let _pk = halo2_proofs::plonk::keygen_pk(&params, vk, &circuit).unwrap();
+    let _pk = circuit.keygen_pk(&params, vk).unwrap();
     let pk_ms = t2.elapsed().as_millis();
 
     println!("KEYGEN SPLIT (k={ZKPP_K}): params={params_ms}ms  vk={vk_ms}ms  pk={pk_ms}ms");

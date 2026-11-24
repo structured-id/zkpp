@@ -12,7 +12,7 @@
 //! VK is regenerated from cached params (fast: ~100ms vs ~5s for params).
 
 use halo2_proofs::{
-    plonk::{Error, ProvingKey, VerifyingKey, keygen_pk, keygen_vk},
+    plonk::{Error, ProvingKey, VerifyingKey},
     poly::commitment::Params,
 };
 use pasta_curves::vesta;
@@ -20,6 +20,7 @@ use std::io;
 use std::path::Path;
 
 use crate::circuit::{CircuitShape, ZkppCircuit};
+use crate::types::PolicyError;
 
 /// Generate SRS parameters for a given circuit size.
 ///
@@ -37,7 +38,7 @@ pub fn generate_params(k: u32) -> Params<vesta::Affine> {
 pub fn generate_pk(
     params: &Params<vesta::Affine>,
     shape: CircuitShape,
-) -> Result<ProvingKey<vesta::Affine>, Error> {
+) -> Result<ProvingKey<vesta::Affine>, KeygenError> {
     generate_pk_with(params, shape, |_| {})
 }
 
@@ -50,16 +51,35 @@ pub enum KeygenStep {
     ProvingKey,
 }
 
+/// Why no key was generated for a shape.
+#[derive(Debug, thiserror::Error)]
+pub enum KeygenError {
+    /// The shape's policy is one the circuit cannot hold; a key for it would
+    /// enforce something else than the policy says.
+    #[error(transparent)]
+    Policy(#[from] PolicyError),
+    /// The proving system refused the circuit.
+    #[error("key generation failed: {0:?}")]
+    Circuit(Error),
+}
+
+/// The circuit of `shape`, once its policy is one the circuit can hold.
+fn circuit_of(shape: CircuitShape) -> Result<ZkppCircuit, KeygenError> {
+    shape.policy.check()?;
+    Ok(ZkppCircuit::for_shape(shape))
+}
+
 /// [`generate_pk`], calling `on_step` as each key is finished.
 pub fn generate_pk_with(
     params: &Params<vesta::Affine>,
     shape: CircuitShape,
     mut on_step: impl FnMut(KeygenStep),
-) -> Result<ProvingKey<vesta::Affine>, Error> {
-    let circuit = ZkppCircuit::for_shape(shape);
-    let vk = keygen_vk(params, &circuit)?;
+) -> Result<ProvingKey<vesta::Affine>, KeygenError> {
+    let vk = generate_vk(params, shape)?;
     on_step(KeygenStep::VerifyingKey);
-    let pk = keygen_pk(params, vk, &circuit)?;
+    let pk = ZkppCircuit::for_shape(shape)
+        .keygen_pk(params, vk)
+        .map_err(KeygenError::Circuit)?;
     on_step(KeygenStep::ProvingKey);
     Ok(pk)
 }
@@ -68,8 +88,10 @@ pub fn generate_pk_with(
 pub fn generate_vk(
     params: &Params<vesta::Affine>,
     shape: CircuitShape,
-) -> Result<VerifyingKey<vesta::Affine>, Error> {
-    keygen_vk(params, &ZkppCircuit::for_shape(shape))
+) -> Result<VerifyingKey<vesta::Affine>, KeygenError> {
+    circuit_of(shape)?
+        .keygen_vk(params)
+        .map_err(KeygenError::Circuit)
 }
 
 /// Write SRS params to a writer (binary format).

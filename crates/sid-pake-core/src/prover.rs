@@ -6,7 +6,7 @@
 
 use ff::PrimeField;
 use halo2_proofs::{
-    plonk::{ProvingKey, create_proof},
+    plonk::ProvingKey,
     poly::commitment::Params,
     transcript::{Blake2bWrite, Challenge255, Transcript},
 };
@@ -149,15 +149,15 @@ impl ZkppProver {
             .common_scalar(crate::binding::transcript_context(context))
             .map_err(|e| ZkppProveError::ProofFailed(format!("{e:?}")))?;
 
-        create_proof(
-            &self.params,
-            &self.pk,
-            &[circuit],
-            &[&[&instances]],
-            UnwrapErr(SysRng),
-            &mut transcript,
-        )
-        .map_err(|e| ZkppProveError::ProofFailed(format!("{e:?}")))?;
+        circuit
+            .create_proof(
+                &self.params,
+                &self.pk,
+                &instances,
+                UnwrapErr(SysRng),
+                &mut transcript,
+            )
+            .map_err(|e| ZkppProveError::ProofFailed(format!("{e:?}")))?;
 
         let proof_bytes = transcript.finalize();
         Ok((ZkppProof(proof_bytes), instances))
