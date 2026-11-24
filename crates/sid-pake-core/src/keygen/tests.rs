@@ -121,6 +121,50 @@ fn a_proof_for_fewer_domains_is_refused() {
     ));
 }
 
+/// A policy the circuit cannot hold gets no key, with the reason: a minimum
+/// above the longest password, and a symbol minimum beside a length counted
+/// in code points (one class count carries either). At the limit a key is
+/// built.
+/// Bug prevented: a key built for such a policy silently enforcing something
+/// else, here a code-point policy whose symbol minimum is never checked.
+#[test]
+fn a_policy_the_circuit_cannot_hold_gets_no_key() {
+    use crate::types::{MAX_PASSWORD_LEN, PolicyError};
+    let params = generate_params(ZKPP_K);
+    let longest = MAX_PASSWORD_LEN as u32;
+    let with_symbols = PolicyParams {
+        min_symbol: 1,
+        ..PolicyParams::code_points(12)
+    };
+    for (policy, reason) in [
+        (
+            PolicyParams::code_points(longest + 1),
+            PolicyError::MinimumTooLarge,
+        ),
+        (
+            PolicyParams {
+                min_digit: longest + 1,
+                ..CE_DEFAULT_POLICY
+            },
+            PolicyError::MinimumTooLarge,
+        ),
+        (with_symbols, PolicyError::SymbolsWithCodePoints),
+    ] {
+        assert_eq!(policy.check(), Err(reason));
+        let shape = CircuitShape::single_domain(policy);
+        assert!(matches!(
+            generate_vk(&params, shape),
+            Err(KeygenError::Policy(r)) if r == reason
+        ));
+        assert!(matches!(
+            generate_pk(&params, shape),
+            Err(KeygenError::Policy(r)) if r == reason
+        ));
+    }
+    let at_the_limit = CircuitShape::single_domain(PolicyParams::code_points(longest));
+    assert!(generate_vk(&params, at_the_limit).is_ok());
+}
+
 /// SHA-256 of the pinned representation of `shape`'s verifying key over
 /// `params`, in hex.
 fn pinned_digest(params: &Params<vesta::Affine>, shape: CircuitShape) -> String {

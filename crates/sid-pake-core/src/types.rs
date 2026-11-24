@@ -15,10 +15,9 @@ pub const MAX_PASSWORD_LEN: usize = 128;
 pub struct PolicyVersion(pub u32);
 
 /// What a policy's minimum length counts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LengthUnit {
     /// The password's bytes.
-    #[default]
     Bytes,
     /// Unicode code points: the bytes that start one in UTF-8, so a
     /// multibyte character counts once.
@@ -38,7 +37,6 @@ pub struct PolicyParams {
     /// [`LengthUnit::CodePoints`]: the circuit's fourth class count carries
     /// the code points there (see [`PolicyParams::check`]).
     pub min_symbol: u32,
-    #[serde(default)]
     pub length_unit: LengthUnit,
 }
 
