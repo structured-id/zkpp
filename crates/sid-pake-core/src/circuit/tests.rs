@@ -1,6 +1,5 @@
 use super::*;
 use crate::test_support::{history_evaluation, history_inputs, oprf_element};
-use halo2_proofs::dev::MockProver;
 
 fn make_password(s: &str) -> ([u8; MAX_PASSWORD_LEN], u32) {
     let mut buf = [0u8; MAX_PASSWORD_LEN];
@@ -25,7 +24,9 @@ fn circuit(password: &str, filter: BloomFilter, domains: usize) -> ZkppCircuit {
 }
 
 fn satisfied(circuit: &ZkppCircuit) -> bool {
-    MockProver::run(ZKPP_K, circuit, vec![circuit.instance_values()])
+    circuit
+        .clone()
+        .mock(ZKPP_K, circuit.instance_values())
         .unwrap()
         .verify()
         .is_ok()
@@ -40,7 +41,8 @@ fn test_circuit_stats() {
     use crate::prover::ZkppProver;
 
     let c = circuit("Str0ngP@ssword!", BloomFilter::new(BREACH_PARAMS), 1);
-    MockProver::run(ZKPP_K, &c, vec![c.instance_values()])
+    c.clone()
+        .mock(ZKPP_K, c.instance_values())
         .unwrap()
         .assert_satisfied();
 
@@ -119,10 +121,7 @@ fn the_exposed_element_is_the_blinded_hash_of_the_checked_password() {
         let mut instances = honest.clone();
         instances[0] = *coords.x();
         instances[1] = *coords.y();
-        MockProver::run(ZKPP_K, &c, vec![instances])
-            .unwrap()
-            .verify()
-            .is_ok()
+        c.clone().mock(ZKPP_K, instances).unwrap().verify().is_ok()
     };
     let (weak, _) = make_password("abc");
     let blind = crate::history::blind_scalar(c.blind);

@@ -16,10 +16,16 @@ struct PolicyTestCircuit {
 impl PolicyTestCircuit {
     /// The honest witness for `password`: its bytes, active exactly on them.
     fn honest(password: &str, policy: PolicyParams) -> Self {
+        Self::of_bytes(password.as_bytes(), policy)
+    }
+
+    /// The honest witness for a password of any bytes, as a client that does
+    /// not encode text sends them.
+    fn of_bytes(password: &[u8], policy: PolicyParams) -> Self {
         let mut bytes = [0u64; MAX_PASSWORD_LEN];
         let mut active = [false; MAX_PASSWORD_LEN];
-        for (i, b) in password.bytes().enumerate() {
-            bytes[i] = u64::from(b);
+        for (i, b) in password.iter().enumerate() {
+            bytes[i] = u64::from(*b);
             active[i] = true;
         }
         Self {
@@ -30,13 +36,25 @@ impl PolicyTestCircuit {
     }
 
     fn satisfied(&self) -> bool {
-        // k=11 gives 2048 rows, enough for the password rows, the comparison
-        // rows and the lookup tables.
-        MockProver::run(11, self, vec![]).unwrap().verify().is_ok()
+        satisfied(self, self.policy.length_unit)
     }
 }
 
-impl Circuit<pallas::Base> for PolicyTestCircuit {
+/// A witness of Gadget A alone, laid out under a given configuration.
+trait PolicyWitness: Clone {
+    fn lay_out(
+        &self,
+        config: PolicyEngineConfig,
+        layouter: impl Layouter<pallas::Base>,
+    ) -> Result<(), Error>;
+}
+
+/// `W` under the constraint system of one length unit, which the proving
+/// system reads from the type.
+#[derive(Clone)]
+struct Under<const CODE_POINTS: bool, W>(W);
+
+impl<const CODE_POINTS: bool, W: PolicyWitness> Circuit<pallas::Base> for Under<CODE_POINTS, W> {
     type Config = PolicyEngineConfig;
     type FloorPlanner = SimpleFloorPlanner;
 
@@ -45,12 +63,38 @@ impl Circuit<pallas::Base> for PolicyTestCircuit {
     }
 
     fn configure(meta: &mut ConstraintSystem<pallas::Base>) -> Self::Config {
-        PolicyEngineChip::configure(meta)
+        let unit = if CODE_POINTS {
+            LengthUnit::CodePoints
+        } else {
+            LengthUnit::Bytes
+        };
+        PolicyEngineChip::configure(meta, unit)
     }
 
     fn synthesize(
         &self,
         config: Self::Config,
+        layouter: impl Layouter<pallas::Base>,
+    ) -> Result<(), Error> {
+        self.0.lay_out(config, layouter)
+    }
+}
+
+/// Whether `witness` satisfies Gadget A under the constraint system of
+/// `unit`. k=11 gives 2048 rows, enough for the password rows, the
+/// comparison rows and the lookup tables.
+fn satisfied(witness: &impl PolicyWitness, unit: LengthUnit) -> bool {
+    let run = match unit {
+        LengthUnit::Bytes => MockProver::run(11, &Under::<false, _>(witness.clone()), vec![]),
+        LengthUnit::CodePoints => MockProver::run(11, &Under::<true, _>(witness.clone()), vec![]),
+    };
+    run.unwrap().verify().is_ok()
+}
+
+impl PolicyWitness for PolicyTestCircuit {
+    fn lay_out(
+        &self,
+        config: PolicyEngineConfig,
         mut layouter: impl Layouter<pallas::Base>,
     ) -> Result<(), Error> {
         let chip = PolicyEngineChip::construct(config, self.policy);
@@ -261,6 +305,117 @@ fn a_continuation_byte_is_not_a_code_point() {
     assert!(!w.satisfied());
 }
 
+/// The decoder accepts exactly well-formed UTF-8 (RFC 3629 section 4): it
+/// agrees with the standard library on every string of one and two bytes and
+/// on every three- and four-byte string over the bytes where the grammar's
+/// ranges begin and end.
+/// Bug prevented: an overlong form, a surrogate or a value above U+10FFFF
+/// taken for a character, or a valid one refused.
+#[test]
+fn the_decoder_accepts_exactly_well_formed_utf8() {
+    fn accepted(bytes: &[u8]) -> bool {
+        bytes
+            .iter()
+            .try_fold(0u8, |state, byte| utf8_step(state, *byte))
+            == Some(0)
+    }
+    fn agrees(bytes: &[u8]) {
+        // NUL is the padding, not a byte of a password: it is left out.
+        assert_eq!(
+            accepted(bytes),
+            core::str::from_utf8(bytes).is_ok(),
+            "{bytes:02x?}"
+        );
+    }
+    for a in 1..=255u8 {
+        agrees(&[a]);
+        for b in 1..=255u8 {
+            agrees(&[a, b]);
+        }
+    }
+    // Each side of every boundary of the grammar's ranges.
+    const EDGES: [u8; 22] = [
+        0x01, 0x7F, 0x80, 0x8F, 0x90, 0x9F, 0xA0, 0xBF, 0xC0, 0xC1, 0xC2, 0xDF, 0xE0, 0xE1, 0xEC,
+        0xED, 0xEE, 0xEF, 0xF0, 0xF3, 0xF4, 0xF5,
+    ];
+    for a in EDGES {
+        for b in EDGES {
+            for c in EDGES {
+                agrees(&[a, b, c]);
+                for d in EDGES {
+                    agrees(&[a, b, c, d]);
+                }
+            }
+        }
+    }
+}
+
+/// A policy counted in code points has no proof for bytes that are not
+/// well-formed UTF-8, whatever their count: lead bytes with no tail, a tail
+/// with no lead, an overlong form, a surrogate, a value above U+10FFFF and a
+/// sequence cut by the end of the password are all refused; the same length
+/// of well-formed text passes.
+/// Bug prevented: twelve lead bytes counted as twelve characters.
+#[test]
+fn a_code_point_policy_refuses_malformed_utf8() {
+    let padded = |malformed: &[u8]| {
+        let mut password = b"abcdefghijkl".to_vec();
+        password.extend_from_slice(malformed);
+        PolicyTestCircuit::of_bytes(&password, STANDARD_POLICY).satisfied()
+    };
+    assert!(padded("é😀".as_bytes()));
+    for malformed in [
+        &[0xC2][..],
+        &[0x80],
+        &[0xC0, 0x80],
+        &[0xE0, 0x80, 0x80],
+        &[0xED, 0xA0, 0x80],
+        &[0xF4, 0x90, 0x80, 0x80],
+        &[0xF5, 0x80, 0x80, 0x80],
+        &[0xE2, 0x82],
+        &[0xFF],
+    ] {
+        assert!(!padded(malformed), "{malformed:02x?}");
+    }
+    assert!(!PolicyTestCircuit::of_bytes(&[0xC2; 12], STANDARD_POLICY).satisfied());
+    assert!(!PolicyTestCircuit::of_bytes(&[0xC2; 24], STANDARD_POLICY).satisfied());
+}
+
+/// A sequence cannot run past the last byte of the buffer: the state after
+/// it is a code point boundary, and a prover cannot claim one it did not
+/// reach.
+/// Bug prevented: a password filling the buffer and ending on a lead byte
+/// accepted because no padding row follows to refuse it.
+#[test]
+fn a_full_buffer_ends_at_a_code_point_boundary() {
+    let mut password = "a".repeat(MAX_PASSWORD_LEN - 1).into_bytes();
+    password.push(0xC2);
+    assert!(!PolicyTestCircuit::of_bytes(&password, STANDARD_POLICY).satisfied());
+
+    let full = "a".repeat(MAX_PASSWORD_LEN - 2) + "é";
+    assert!(RawWitness::honest(&full, STANDARD_POLICY).satisfied());
+    // The same bytes with the last one replaced by a lead byte, and the
+    // final state claimed to be a boundary.
+    let mut forged = RawWitness::honest(&full, STANDARD_POLICY);
+    forged.bytes[MAX_PASSWORD_LEN - 1] = 0xC2;
+    assert!(!forged.satisfied());
+    // An honest state chain started inside a sequence.
+    let mut forged = RawWitness::honest(&full, STANDARD_POLICY);
+    forged.states[0] = 1;
+    assert!(!forged.satisfied());
+}
+
+/// Version 1 has no encoding check, as released: bytes that are no UTF-8
+/// meet it by their count and classes.
+/// Bug prevented: the released policy starting to refuse passwords it
+/// accepted.
+#[test]
+fn the_released_policy_takes_any_bytes() {
+    let mut password = b"Aa1".to_vec();
+    password.extend_from_slice(&[0xFF, 0xC2, 0x80, 0x80, 0xED]);
+    assert!(PolicyTestCircuit::of_bytes(&password, CE_DEFAULT_POLICY).satisfied());
+}
+
 /// Version 1 counts bytes as it always did: a multibyte input reaches its
 /// length minimum by bytes.
 /// Bug prevented: the released policy changing its meaning with the new
@@ -285,6 +440,9 @@ struct RawWitness {
     acc: [[u64; 5]; MAX_PASSWORD_LEN],
     /// The counts on the comparison rows.
     counts: [u64; 5],
+    /// The UTF-8 decoder's state before each byte and after the last; laid
+    /// out only under a policy counted in code points.
+    states: [u64; MAX_PASSWORD_LEN + 1],
     policy: PolicyParams,
 }
 
@@ -297,10 +455,15 @@ impl RawWitness {
             flags: [[0; 4]; MAX_PASSWORD_LEN],
             acc: [[0; 5]; MAX_PASSWORD_LEN],
             counts: [0; 5],
+            states: [0; MAX_PASSWORD_LEN + 1],
             policy,
         };
         let mut sums = [0u64; 5];
+        let mut state = 0u8;
         for i in 0..MAX_PASSWORD_LEN {
+            let byte = password.as_bytes().get(i).copied().unwrap_or(0);
+            state = utf8_step(state, byte).unwrap_or(0);
+            w.states[i + 1] = u64::from(state);
             if let Some(&b) = password.as_bytes().get(i) {
                 w.bytes[i] = u64::from(b);
                 w.active[i] = 1;
@@ -324,25 +487,14 @@ impl RawWitness {
     }
 
     fn satisfied(&self) -> bool {
-        MockProver::run(11, self, vec![]).unwrap().verify().is_ok()
+        satisfied(self, self.policy.length_unit)
     }
 }
 
-impl Circuit<pallas::Base> for RawWitness {
-    type Config = PolicyEngineConfig;
-    type FloorPlanner = SimpleFloorPlanner;
-
-    fn without_witnesses(&self) -> Self {
-        self.clone()
-    }
-
-    fn configure(meta: &mut ConstraintSystem<pallas::Base>) -> Self::Config {
-        PolicyEngineChip::configure(meta)
-    }
-
-    fn synthesize(
+impl PolicyWitness for RawWitness {
+    fn lay_out(
         &self,
-        config: Self::Config,
+        config: PolicyEngineConfig,
         mut layouter: impl Layouter<pallas::Base>,
     ) -> Result<(), Error> {
         let chip = PolicyEngineChip::construct(config.clone(), self.policy);
@@ -387,13 +539,16 @@ impl Circuit<pallas::Base> for RawWitness {
                         last.push(region.assign_advice(|| "acc", col, i, || fe(self.acc[i][k]))?);
                     }
                 }
-                let minimums = [
-                    self.policy.min_length,
-                    self.policy.min_upper,
-                    self.policy.min_lower,
-                    self.policy.min_digit,
-                    self.policy.min_symbol,
-                ];
+                if let Some(utf8) = &config.utf8 {
+                    for (i, state) in self.states.iter().enumerate() {
+                        region.assign_advice(|| "utf8 state", utf8.state, i, || fe(*state))?;
+                        if i < MAX_PASSWORD_LEN {
+                            utf8.q_step.enable(&mut region, i)?;
+                        }
+                    }
+                    utf8.q_end.enable(&mut region, MAX_PASSWORD_LEN)?;
+                }
+                let minimums = self.policy.circuit_minimums();
                 for k in 0..5 {
                     let row = MAX_PASSWORD_LEN + k;
                     config.q_cmp.enable(&mut region, row)?;

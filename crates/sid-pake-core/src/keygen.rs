@@ -12,7 +12,7 @@
 //! VK is regenerated from cached params (fast: ~100ms vs ~5s for params).
 
 use halo2_proofs::{
-    plonk::{Error, ProvingKey, VerifyingKey, keygen_pk, keygen_vk},
+    plonk::{Error, ProvingKey, VerifyingKey},
     poly::commitment::Params,
 };
 use pasta_curves::vesta;
@@ -75,10 +75,11 @@ pub fn generate_pk_with(
     shape: CircuitShape,
     mut on_step: impl FnMut(KeygenStep),
 ) -> Result<ProvingKey<vesta::Affine>, KeygenError> {
-    let circuit = circuit_of(shape)?;
-    let vk = keygen_vk(params, &circuit).map_err(KeygenError::Circuit)?;
+    let vk = generate_vk(params, shape)?;
     on_step(KeygenStep::VerifyingKey);
-    let pk = keygen_pk(params, vk, &circuit).map_err(KeygenError::Circuit)?;
+    let pk = ZkppCircuit::for_shape(shape)
+        .keygen_pk(params, vk)
+        .map_err(KeygenError::Circuit)?;
     on_step(KeygenStep::ProvingKey);
     Ok(pk)
 }
@@ -88,7 +89,9 @@ pub fn generate_vk(
     params: &Params<vesta::Affine>,
     shape: CircuitShape,
 ) -> Result<VerifyingKey<vesta::Affine>, KeygenError> {
-    keygen_vk(params, &circuit_of(shape)?).map_err(KeygenError::Circuit)
+    circuit_of(shape)?
+        .keygen_vk(params)
+        .map_err(KeygenError::Circuit)
 }
 
 /// Write SRS params to a writer (binary format).

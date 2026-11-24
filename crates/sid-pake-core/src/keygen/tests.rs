@@ -29,7 +29,6 @@ fn keys(n: usize) -> Vec<pallas::Scalar> {
 /// out the fixed minimums and the domain count from it.
 #[test]
 fn without_witnesses_keeps_the_shape() {
-    use halo2_proofs::plonk::Circuit;
     let shape = CircuitShape {
         policy: STRICT,
         history_domains: 2,
@@ -257,6 +256,39 @@ fn a_proof_for_one_version_is_refused_under_another() {
     }
 }
 
+/// The whole proof under a policy counted in code points: a password of
+/// multibyte characters at the minimum is proved and verified, one code
+/// point short has no proof, and bytes that are no UTF-8 have none either.
+/// Bug prevented: the combined circuit laying a code-point policy out under
+/// the byte policy's constraint system, where nothing checks the encoding.
+#[test]
+fn a_code_point_policy_proves_well_formed_text_only() {
+    use crate::types::STANDARD_POLICY;
+    let shape = CircuitShape::single_domain(STANDARD_POLICY);
+    let params = generate_params(ZKPP_K);
+    let pk = generate_pk(&params, shape).unwrap();
+    let verifier = ZkppVerifier::new(params.clone(), pk.get_vk().clone(), shape);
+    let prover = ZkppProver::new(params, pk, shape);
+    let ks = keys(1);
+    let prove = |password: &[u8]| {
+        let blind = pallas::Scalar::random(&mut rand::rng());
+        prover
+            .prove(password, blind, b"ctx", &history_evaluation(password, &ks))
+            .map(|bound| (bound, oprf_element(password, blind)))
+    };
+
+    let password = "пароль 日本語!!";
+    assert_eq!(password.chars().count(), 12);
+    let (bound, m) = prove(password.as_bytes()).unwrap();
+    verifier.verify(&bound, b"ctx", m).expect("it verifies");
+
+    assert!(prove("пароль 日本語!".as_bytes()).is_err());
+    assert!(prove(&[0xC2; 24]).is_err());
+    let mut cut = password.as_bytes().to_vec();
+    cut.extend_from_slice(&[0xE2, 0x82]);
+    assert!(prove(&cut).is_err());
+}
+
 #[test]
 fn test_keygen() {
     let params = generate_params(ZKPP_K);
@@ -289,11 +321,11 @@ fn test_keygen_split_timing() {
 
     let circuit = ZkppCircuit::for_shape(CE);
     let t1 = Instant::now();
-    let vk = halo2_proofs::plonk::keygen_vk(&params, &circuit).unwrap();
+    let vk = circuit.clone().keygen_vk(&params).unwrap();
     let vk_ms = t1.elapsed().as_millis();
 
     let t2 = Instant::now();
-    let _pk = halo2_proofs::plonk::keygen_pk(&params, vk, &circuit).unwrap();
+    let _pk = circuit.keygen_pk(&params, vk).unwrap();
     let pk_ms = t2.elapsed().as_millis();
 
     println!("KEYGEN SPLIT (k={ZKPP_K}): params={params_ms}ms  vk={vk_ms}ms  pk={pk_ms}ms");

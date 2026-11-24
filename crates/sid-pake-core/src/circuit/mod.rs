@@ -14,12 +14,18 @@ pub mod gadget_h;
 
 use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner, Value},
-    plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Expression, Instance, Selector},
-    poly::Rotation,
+    dev::MockProver,
+    plonk::{
+        Advice, Circuit, Column, ConstraintSystem, Error, Expression, Instance, ProvingKey,
+        Selector, VerifyingKey, create_proof, keygen_pk, keygen_vk,
+    },
+    poly::{Rotation, commitment::Params},
+    transcript::{EncodedChallenge, TranscriptWrite},
 };
-use pasta_curves::pallas;
+use pasta_curves::{pallas, vesta};
+use rand_core::Rng;
 
-use crate::types::{CE_DEFAULT_POLICY, MAX_PASSWORD_LEN, PolicyParams};
+use crate::types::{CE_DEFAULT_POLICY, LengthUnit, MAX_PASSWORD_LEN, PolicyParams};
 use gadget_a::{PolicyEngineChip, PolicyEngineConfig};
 use gadget_c::{OpaqueBinderChip, OpaqueBinderConfig, hash_to_curve_outside};
 use gadget_d::{BloomFilter, BloomParams, BreachBloomChip, BreachBloomConfig};
@@ -193,18 +199,124 @@ impl ZkppCircuit {
     }
 }
 
-impl Circuit<pallas::Base> for ZkppCircuit {
+/// The circuit under the constraint system of one length unit. The proving
+/// system configures a circuit from its type alone, before it sees the
+/// policy, so the unit that decides the constraint system (code points add
+/// the UTF-8 check, bytes keep the released one) is in the type.
+#[derive(Clone)]
+struct Laid<const CODE_POINTS: bool>(ZkppCircuit);
+
+impl<const CODE_POINTS: bool> Laid<CODE_POINTS> {
+    const UNIT: LengthUnit = if CODE_POINTS {
+        LengthUnit::CodePoints
+    } else {
+        LengthUnit::Bytes
+    };
+}
+
+impl<const CODE_POINTS: bool> Circuit<pallas::Base> for Laid<CODE_POINTS> {
     type Config = ZkppCircuitConfig;
     type FloorPlanner = SimpleFloorPlanner;
 
-    /// Keeps the policy and the domain count: they set fixed columns and the
-    /// layout, which a witness-free copy must reproduce exactly.
     fn without_witnesses(&self) -> Self {
-        Self::for_shape(self.shape())
+        Self(self.0.without_witnesses())
     }
 
     fn configure(meta: &mut ConstraintSystem<pallas::Base>) -> Self::Config {
-        let policy_engine = PolicyEngineChip::configure(meta);
+        ZkppCircuit::configure(meta, Self::UNIT)
+    }
+
+    fn synthesize(
+        &self,
+        config: Self::Config,
+        layouter: impl Layouter<pallas::Base>,
+    ) -> Result<(), Error> {
+        // Only [`laid`] builds this type, from the policy's own unit.
+        debug_assert_eq!(self.0.policy.length_unit, Self::UNIT);
+        self.0.synthesize(config, layouter)
+    }
+}
+
+/// Run `$body` with `$laid`, the circuit `$circuit` under the constraint
+/// system of its policy's length unit.
+macro_rules! laid {
+    ($circuit:expr, |$laid:ident| $body:expr) => {{
+        let circuit: ZkppCircuit = $circuit;
+        match circuit.policy.length_unit {
+            LengthUnit::Bytes => {
+                let $laid = Laid::<false>(circuit);
+                $body
+            }
+            LengthUnit::CodePoints => {
+                let $laid = Laid::<true>(circuit);
+                $body
+            }
+        }
+    }};
+}
+
+impl ZkppCircuit {
+    /// The verifying key of this circuit's shape over `params`.
+    pub fn keygen_vk(
+        self,
+        params: &Params<vesta::Affine>,
+    ) -> Result<VerifyingKey<vesta::Affine>, Error> {
+        laid!(self, |laid| keygen_vk(params, &laid))
+    }
+
+    /// The proving key of this circuit's shape over `params`, for its
+    /// verifying key `vk`.
+    pub fn keygen_pk(
+        self,
+        params: &Params<vesta::Affine>,
+        vk: VerifyingKey<vesta::Affine>,
+    ) -> Result<ProvingKey<vesta::Affine>, Error> {
+        laid!(self, |laid| keygen_pk(params, vk, &laid))
+    }
+
+    /// Write the proof of this circuit for `instances` into `transcript`,
+    /// under the proving key `pk` of its shape.
+    pub fn create_proof<E, R, T>(
+        self,
+        params: &Params<vesta::Affine>,
+        pk: &ProvingKey<vesta::Affine>,
+        instances: &[pallas::Base],
+        rng: R,
+        transcript: &mut T,
+    ) -> Result<(), Error>
+    where
+        E: EncodedChallenge<vesta::Affine>,
+        R: Rng,
+        T: TranscriptWrite<vesta::Affine, E>,
+    {
+        laid!(self, |laid| create_proof(
+            params,
+            pk,
+            &[laid],
+            &[&[instances]],
+            rng,
+            transcript
+        ))
+    }
+
+    /// The mock prover over this circuit and `instances`: every constraint
+    /// checked row by row, for tests and diagnostics.
+    pub fn mock(
+        self,
+        k: u32,
+        instances: Vec<pallas::Base>,
+    ) -> Result<MockProver<pallas::Base>, Error> {
+        laid!(self, |laid| MockProver::run(k, &laid, vec![instances]))
+    }
+
+    /// Keeps the policy and the domain count: they set fixed columns and the
+    /// layout, which a witness-free copy must reproduce exactly.
+    pub fn without_witnesses(&self) -> Self {
+        Self::for_shape(self.shape())
+    }
+
+    fn configure(meta: &mut ConstraintSystem<pallas::Base>, unit: LengthUnit) -> ZkppCircuitConfig {
+        let policy_engine = PolicyEngineChip::configure(meta, unit);
         let opaque_binder = OpaqueBinderChip::configure(meta);
         let history = HistoryTagChip::configure(
             meta,
@@ -257,7 +369,7 @@ impl Circuit<pallas::Base> for ZkppCircuit {
 
     fn synthesize(
         &self,
-        config: Self::Config,
+        config: ZkppCircuitConfig,
         mut layouter: impl Layouter<pallas::Base>,
     ) -> Result<(), Error> {
         // Prepare witness values
