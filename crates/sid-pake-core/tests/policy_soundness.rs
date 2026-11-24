@@ -12,7 +12,7 @@ use sid_pake_core::circuit::CircuitShape;
 use sid_pake_core::client::{RegistrationStart, start_registration};
 use sid_pake_core::keygen::{generate_params, generate_pk};
 use sid_pake_core::prover::ZkppProver;
-use sid_pake_core::types::{CE_DEFAULT_POLICY, PolicyParams};
+use sid_pake_core::types::{CE_DEFAULT_POLICY, LengthUnit, PolicyParams};
 use sid_pake_core::verifier::ZkppVerifier;
 
 const LAX: PolicyParams = PolicyParams {
@@ -21,6 +21,7 @@ const LAX: PolicyParams = PolicyParams {
     min_lower: 0,
     min_digit: 0,
     min_symbol: 0,
+    length_unit: LengthUnit::Bytes,
 };
 const CE: CircuitShape = CircuitShape::single_domain(CE_DEFAULT_POLICY);
 const LAX_SHAPE: CircuitShape = CircuitShape::single_domain(LAX);

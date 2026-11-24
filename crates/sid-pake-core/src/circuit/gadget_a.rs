@@ -31,7 +31,7 @@ use halo2_proofs::{
 };
 use pasta_curves::pallas;
 
-use crate::types::{MAX_PASSWORD_LEN, PolicyParams};
+use crate::types::{LengthUnit, MAX_PASSWORD_LEN, PolicyParams, starts_code_point};
 
 /// Values a comparison difference may take: counts and minimums are at most
 /// `MAX_PASSWORD_LEN`, so a met minimum leaves a difference in this range and
@@ -282,10 +282,12 @@ impl PolicyEngineChip {
     /// Load the ASCII class tables and the byte range table.
     pub fn load_tables(&self, layouter: &mut impl Layouter<pallas::Base>) -> Result<(), Error> {
         let config = &self.config;
-        let symbols: Vec<u64> = (33u64..=47)
-            .chain(58..=64)
-            .chain(91..=96)
-            .chain(123..=126)
+        // The fourth class is the policy's: ASCII symbols, or the bytes that
+        // start a code point when the policy counts those. The table is part
+        // of the keys, like the minimums.
+        let symbols: Vec<u64> = (0u8..=255)
+            .filter(|b| Self::fourth_class(self.policy.length_unit, *b))
+            .map(u64::from)
             .collect();
         let tables: [(&str, TableColumn, Vec<u64>); 5] = [
             ("T_UPPER", config.table_upper, (65u64..=90).collect()),
@@ -313,16 +315,23 @@ impl PolicyEngineChip {
         Ok(())
     }
 
-    /// Classify a single byte into character classes.
-    fn classify(b: u64) -> (bool, bool, bool, bool) {
+    /// Whether `byte` counts in the fourth class under `unit`.
+    fn fourth_class(unit: LengthUnit, byte: u8) -> bool {
+        match unit {
+            LengthUnit::Bytes => {
+                matches!(byte, 33..=47 | 58..=64 | 91..=96 | 123..=126)
+            }
+            LengthUnit::CodePoints => starts_code_point(byte),
+        }
+    }
+
+    /// Classify a single byte into the four counted classes under `unit`.
+    fn classify(unit: LengthUnit, b: u64) -> (bool, bool, bool, bool) {
         let is_upper = (65..=90).contains(&b);
         let is_lower = (97..=122).contains(&b);
         let is_digit = (48..=57).contains(&b);
-        let is_symbol = (33..=47).contains(&b)
-            || (58..=64).contains(&b)
-            || (91..=96).contains(&b)
-            || (123..=126).contains(&b);
-        (is_upper, is_lower, is_digit, is_symbol)
+        let fourth = u8::try_from(b).is_ok_and(|byte| Self::fourth_class(unit, byte));
+        (is_upper, is_lower, is_digit, fourth)
     }
 
     /// Synthesize the policy engine over the padded password and its active
@@ -382,7 +391,7 @@ impl PolicyEngineChip {
                             return [pallas::Base::zero(); 4];
                         }
                         let b_u64 = u64::from_le_bytes(b.to_repr()[..8].try_into().unwrap());
-                        let (u, l, d, s) = Self::classify(b_u64);
+                        let (u, l, d, s) = Self::classify(policy.length_unit, b_u64);
                         [to_fe(u), to_fe(l), to_fe(d), to_fe(s)]
                     });
                     let flag_cols = [
@@ -433,14 +442,8 @@ impl PolicyEngineChip {
                 }
 
                 // Comparison rows: each final count against its fixed minimum,
-                // in the order [length, upper, lower, digit, symbol].
-                let minimums = [
-                    policy.min_length,
-                    policy.min_upper,
-                    policy.min_lower,
-                    policy.min_digit,
-                    policy.min_symbol,
-                ];
+                // in the order [length, upper, lower, digit, fourth class].
+                let minimums = policy.circuit_minimums();
                 let length = last_cells[0].clone();
                 for (k, (count, min)) in last_cells.iter().zip(minimums).enumerate() {
                     let row = MAX_PASSWORD_LEN + k;

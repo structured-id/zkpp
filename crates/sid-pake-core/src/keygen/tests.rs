@@ -2,7 +2,7 @@ use super::*;
 use crate::circuit::ZKPP_K;
 use crate::prover::ZkppProver;
 use crate::test_support::{history_evaluation, oprf_element};
-use crate::types::{CE_DEFAULT_POLICY, PolicyParams};
+use crate::types::{CE_DEFAULT_POLICY, LengthUnit, PolicyParams};
 use crate::verifier::ZkppVerifier;
 use ff::Field;
 use pasta_curves::pallas;
@@ -14,6 +14,7 @@ const STRICT: PolicyParams = PolicyParams {
     min_lower: 2,
     min_digit: 2,
     min_symbol: 1,
+    length_unit: LengthUnit::Bytes,
 };
 
 const CE: CircuitShape = CircuitShape::single_domain(CE_DEFAULT_POLICY);

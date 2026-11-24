@@ -1,7 +1,7 @@
 use super::*;
 use halo2_proofs::{circuit::SimpleFloorPlanner, dev::MockProver, plonk::Circuit};
 
-use crate::types::CE_DEFAULT_POLICY;
+use crate::types::{CE_DEFAULT_POLICY, LONG_POLICY, SHORT_POLICY, STANDARD_POLICY};
 
 /// Gadget A alone over an arbitrary witness: `bytes` are raw field values
 /// (not necessarily bytes) and `active` the flags the prover claims, so a
@@ -157,6 +157,7 @@ fn every_threshold_binds_at_n() {
         min_lower: 0,
         min_digit: 0,
         min_symbol: 0,
+        length_unit: LengthUnit::Bytes,
     };
     let cases: [(PolicyParams, [&str; 3]); 5] = [
         (
@@ -208,6 +209,69 @@ fn every_threshold_binds_at_n() {
     }
 }
 
+/// A policy counted in code points binds at its minimum for ASCII, with no
+/// character class required: one short fails, the minimum and one over pass.
+/// Bug prevented: a built-in policy that asks for a class, or accepts a
+/// password one character short.
+#[test]
+fn a_code_point_minimum_binds_at_n() {
+    for policy in [SHORT_POLICY, STANDARD_POLICY, LONG_POLICY] {
+        let n = policy.min_length as usize;
+        assert!(!PolicyTestCircuit::honest(&"a".repeat(n - 1), policy).satisfied());
+        assert!(PolicyTestCircuit::honest(&"a".repeat(n), policy).satisfied());
+        assert!(PolicyTestCircuit::honest(&"a".repeat(n + 1), policy).satisfied());
+    }
+}
+
+/// A multibyte character counts once: an input with enough bytes but too few
+/// code points is refused, and the same count of code points passes whatever
+/// their width.
+/// Bug prevented: five four-byte emoji (20 bytes) passing a 12-character
+/// minimum.
+#[test]
+fn a_multibyte_character_counts_once() {
+    let emoji = "\u{1F600}";
+    assert_eq!(emoji.len(), 4);
+    assert!(!PolicyTestCircuit::honest(&emoji.repeat(5), STANDARD_POLICY).satisfied());
+    assert!(!PolicyTestCircuit::honest(&emoji.repeat(11), STANDARD_POLICY).satisfied());
+    assert!(PolicyTestCircuit::honest(&emoji.repeat(12), STANDARD_POLICY).satisfied());
+    // Two-byte and three-byte characters, mixed with ASCII and a space.
+    let mixed = "пароль 日本語!";
+    assert_eq!(mixed.chars().count(), 11);
+    assert!(!PolicyTestCircuit::honest(mixed, STANDARD_POLICY).satisfied());
+    assert!(PolicyTestCircuit::honest("пароль 日本語!!", STANDARD_POLICY).satisfied());
+}
+
+/// A continuation byte cannot be claimed as the start of a code point: the
+/// class flag of a byte outside the table has no witness.
+/// Bug prevented: a prover marking every byte of a multibyte character as a
+/// character to reach the minimum.
+#[test]
+fn a_continuation_byte_is_not_a_code_point() {
+    let mut w = RawWitness::honest(&"\u{1F600}".repeat(5), STANDARD_POLICY);
+    // Claim every active byte starts a code point and carry the sums through.
+    let mut sum = 0;
+    for i in 0..MAX_PASSWORD_LEN {
+        w.flags[i][3] = w.active[i];
+        sum += w.active[i];
+        w.acc[i][4] = sum;
+    }
+    w.counts[4] = sum;
+    assert_eq!(sum, 20);
+    assert!(!w.satisfied());
+}
+
+/// Version 1 counts bytes as it always did: a multibyte input reaches its
+/// length minimum by bytes.
+/// Bug prevented: the released policy changing its meaning with the new
+/// unit.
+#[test]
+fn the_released_policy_still_counts_bytes() {
+    // 3 ASCII class characters and two two-byte letters: 7 bytes, then 9.
+    assert!(!PolicyTestCircuit::honest("Aa1пп", CE_DEFAULT_POLICY).satisfied());
+    assert!(PolicyTestCircuit::honest("Aa1ппп", CE_DEFAULT_POLICY).satisfied());
+}
+
 /// Every cell of Gadget A as a prover may set it, laid out under the same
 /// selectors, lookups and copies as the chip, so a test can forge any single
 /// assignment the honest synthesis would compute.
@@ -240,7 +304,7 @@ impl RawWitness {
             if let Some(&b) = password.as_bytes().get(i) {
                 w.bytes[i] = u64::from(b);
                 w.active[i] = 1;
-                let (u, l, d, s) = PolicyEngineChip::classify(u64::from(b));
+                let (u, l, d, s) = PolicyEngineChip::classify(policy.length_unit, u64::from(b));
                 w.flags[i] = [u64::from(u), u64::from(l), u64::from(d), u64::from(s)];
             }
             let increments = [
