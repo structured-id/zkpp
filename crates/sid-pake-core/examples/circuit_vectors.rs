@@ -5,7 +5,8 @@
 //! fixed and permutation commitments), and the SRS the keys are built over.
 //!
 //! `cargo run --release -p sid-pake-core --example circuit_vectors -- <dir>`
-//! writes `<dir>/pinned-<policy>-<domains>.txt`, `<dir>/srs-k11.bin`, and the
+//! writes `<dir>/pinned-v<version>-<domains>.txt` for every built-in policy
+//! version, `<dir>/srs-k11.bin`, and the
 //! OPAQUE element mapping vectors `<dir>/hash-to-curve.json` and
 //! `<dir>/gadget-c.json`.
 
@@ -15,7 +16,7 @@ use pasta_curves::{arithmetic::CurveAffine, pallas};
 use sid_pake_core::circuit::gadget_c::hash_to_curve_outside;
 use sid_pake_core::circuit::{CircuitShape, ZKPP_K};
 use sid_pake_core::keygen::{generate_params, generate_vk, write_params};
-use sid_pake_core::types::CE_DEFAULT_POLICY;
+use sid_pake_core::policy::{BUILT_IN_VERSIONS, get_policy};
 
 fn main() {
     let dir = std::path::PathBuf::from(
@@ -28,22 +29,26 @@ fn main() {
     let mut srs = Vec::new();
     write_params(&params, &mut srs).expect("serialize the SRS");
     std::fs::write(dir.join("srs-k11.bin"), srs).expect("write the SRS");
-    for domains in [1, 2] {
-        let shape = CircuitShape {
-            policy: CE_DEFAULT_POLICY,
-            history_domains: domains,
-        };
-        let vk = generate_vk(&params, shape).expect("keygen");
-        std::fs::write(
-            dir.join(format!("pinned-ce-{domains}.txt")),
-            format!("{:?}", vk.pinned()),
-        )
-        .expect("write the pinned key");
-        std::fs::write(
-            dir.join(format!("pinned-ce-{domains}.pretty.txt")),
-            format!("{:#?}", vk.pinned()),
-        )
-        .expect("write the readable pinned key");
+    for version in BUILT_IN_VERSIONS {
+        let policy = get_policy(version).expect("a built-in version has a policy");
+        for domains in [1, 2] {
+            let shape = CircuitShape {
+                policy,
+                history_domains: domains,
+            };
+            let vk = generate_vk(&params, shape).expect("keygen");
+            let name = format!("pinned-v{}-{domains}", version.0);
+            std::fs::write(
+                dir.join(format!("{name}.txt")),
+                format!("{:?}", vk.pinned()),
+            )
+            .expect("write the pinned key");
+            std::fs::write(
+                dir.join(format!("{name}.pretty.txt")),
+                format!("{:#?}", vk.pinned()),
+            )
+            .expect("write the readable pinned key");
+        }
     }
 
     // The OPAQUE element mapping (gadget C's witness): `H_p` for two passwords

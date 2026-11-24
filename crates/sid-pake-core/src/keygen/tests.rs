@@ -121,6 +121,98 @@ fn a_proof_for_fewer_domains_is_refused() {
     ));
 }
 
+/// SHA-256 of the pinned representation of `shape`'s verifying key over
+/// `params`, in hex.
+fn pinned_digest(params: &Params<vesta::Affine>, shape: CircuitShape) -> String {
+    use sha2::{Digest, Sha256};
+    let vk = generate_vk(params, shape).unwrap();
+    Sha256::digest(format!("{:?}", vk.pinned()))
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Version 1 is released: clients hold its keys and stored credentials were
+/// proved under them, so its verifying key is the released one for both
+/// domain counts whatever policies are added beside it.
+/// Bug prevented: a new policy's column, table or gate changing the layout
+/// of version 1, after which no released client's proof verifies.
+#[test]
+fn the_released_version_keeps_its_verifying_key() {
+    let params = generate_params(ZKPP_K);
+    for (domains, released) in [
+        (
+            1,
+            "e12053485aa071b0ddc42957807bdde3f88ef51f350738dc301b1e78b1222e13",
+        ),
+        (
+            2,
+            "eeb7195d00646e6d9f004718a0240dc6eeb4f077d73be7d40ba17fde881ecdbf",
+        ),
+    ] {
+        let shape = CircuitShape {
+            policy: CE_DEFAULT_POLICY,
+            history_domains: domains,
+        };
+        assert_eq!(pinned_digest(&params, shape), released, "{domains} domains");
+    }
+}
+
+/// Every built-in version has its own keys, and a proof made for one is no
+/// proof for another, even of a password that meets them all: the version a
+/// credential was admitted under cannot be passed off as a different one.
+/// Bug prevented: two versions sharing a key, so a proof for the weakest
+/// policy is accepted where the issuer selected a stronger one.
+#[test]
+fn a_proof_for_one_version_is_refused_under_another() {
+    use crate::policy::{BUILT_IN_VERSIONS, get_policy};
+    let params = generate_params(ZKPP_K);
+    let shapes: Vec<_> = BUILT_IN_VERSIONS
+        .iter()
+        .map(|version| CircuitShape::single_domain(get_policy(*version).unwrap()))
+        .collect();
+    let verifiers: Vec<_> = shapes
+        .iter()
+        .map(|shape| {
+            ZkppVerifier::new(
+                params.clone(),
+                generate_vk(&params, *shape).unwrap(),
+                *shape,
+            )
+        })
+        .collect();
+    for (a, one) in verifiers.iter().enumerate() {
+        for other in &verifiers[a + 1..] {
+            assert_ne!(one.artifact(), other.artifact());
+        }
+    }
+
+    // Long enough and with every class: it meets all four policies.
+    let password = b"Str0ngP@ssword!";
+    let ks = keys(1);
+    for (made_for, shape) in shapes.iter().enumerate() {
+        let prover = ZkppProver::new(
+            params.clone(),
+            generate_pk(&params, *shape).unwrap(),
+            *shape,
+        );
+        let blind = pallas::Scalar::random(&mut rand::rng());
+        let bound = prover
+            .prove(password, blind, b"ctx", &history_evaluation(password, &ks))
+            .unwrap();
+        let m = oprf_element(password, blind);
+        for (under, verifier) in verifiers.iter().enumerate() {
+            assert_eq!(
+                verifier.verify(&bound, b"ctx", m).is_ok(),
+                under == made_for,
+                "made for version {}, verified under version {}",
+                BUILT_IN_VERSIONS[made_for].0,
+                BUILT_IN_VERSIONS[under].0
+            );
+        }
+    }
+}
+
 #[test]
 fn test_keygen() {
     let params = generate_params(ZKPP_K);
